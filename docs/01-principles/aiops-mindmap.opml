@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>AIOps 生产体系</title>
+  </head>
+  <body>
+    <outline text="AIOps 生产体系">
+      <outline text="可观测性">
+        <outline text="指标 Metrics">
+          <outline text="数据源：node_exporter、kubelet / cAdvisor、kube-state-metrics、业务 /metrics"/>
+          <outline text="采集：Prometheus 拉取、服务发现、relabel 控基数"/>
+          <outline text="存储：本地 TSDB、remote_write、Mimir / Thanos / VictoriaMetrics"/>
+          <outline text="消费：PromQL、Alertmanager、Grafana"/>
+        </outline>
+        <outline text="日志 Logs">
+          <outline text="数据源：容器 stdout、containerd 日志文件、节点组件日志、审计日志"/>
+          <outline text="采集：Fluent Bit、Vector、Promtail"/>
+          <outline text="缓冲：Kafka"/>
+          <outline text="处理：解析、脱敏、补 K8s 元数据"/>
+          <outline text="存储：Loki、Elasticsearch、ClickHouse"/>
+        </outline>
+        <outline text="链路 Traces">
+          <outline text="OTel SDK、上下文传播、OTel Collector、采样、Tempo / Jaeger"/>
+        </outline>
+        <outline text="事件 Events">
+          <outline text="K8s Event、event-exporter、audit log"/>
+        </outline>
+      </outline>
+      <outline text="关联">
+        <outline text="统一时间轴"/>
+        <outline text="统一资源标签"/>
+        <outline text="trace_id 串联"/>
+        <outline text="exemplar"/>
+      </outline>
+      <outline text="AI 接入">
+        <outline text="L0 检索问答">
+          <outline text="文档切块"/>
+          <outline text="embedding"/>
+          <outline text="向量库"/>
+          <outline text="混合检索"/>
+        </outline>
+        <outline text="L1 告警增强">
+          <outline text="告警上下文"/>
+          <outline text="指标窗口"/>
+          <outline text="日志窗口"/>
+          <outline text="LLM 摘要"/>
+        </outline>
+        <outline text="L2 根因辅助">
+          <outline text="服务拓扑"/>
+          <outline text="异常检测"/>
+          <outline text="日志模板聚类"/>
+          <outline text="变更关联"/>
+        </outline>
+        <outline text="L3 受控执行">
+          <outline text="工具调用"/>
+          <outline text="最小权限"/>
+          <outline text="人工审批"/>
+          <outline text="审计与回滚"/>
+        </outline>
+      </outline>
+      <outline text="平台与治理">
+        <outline text="Kubernetes"/>
+        <outline text="RBAC"/>
+        <outline text="SLO 与错误预算"/>
+        <outline text="成本控制"/>
+        <outline text="安全与合规"/>
+      </outline>
+      <outline text="实验环境">
+        <outline text="VMware"/>
+        <outline text="Ubuntu Server"/>
+        <outline text="3 节点集群"/>
+        <outline text="demo 服务"/>
+        <outline text="故障注入"/>
+        <outline text="复盘"/>
+      </outline>
+    </outline>
+  </body>
+</opml>
