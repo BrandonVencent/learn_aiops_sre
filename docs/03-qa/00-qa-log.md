@@ -11,7 +11,8 @@
 - 三台 VM 的基线配置已完成：静态 IP、hostname、hosts、swap、内核模块、sysctl、apt、ufw。
 - `k8s-server` 已安装 k3s server。
 - 镜像加速已配置，worker-1、worker-2 已加入；用户报告三节点都是 `Ready`。
-- 下一步：按第 7 节做冒烟测试，确认 Pod 网络、Service 和 NodePort 都通，再进入资源基线和验收。
+- 冒烟测试已通过：Windows 主机可访问任意节点 IP:30080，能看到 nginx 欢迎页。
+- 下一步：按第 9 节应用命名空间、LimitRange、ResourceQuota，然后收集阶段 0–1 验收输出并打快照。
 
 ## 目录
 
@@ -23,6 +24,7 @@
 6. [下一步做什么](#6-下一步做什么)
 7. [三节点 Ready 之后先做什么](#7-三节点-ready-之后先做什么)
 8. [冒烟测试和 smoke-test.yaml 是什么](#8-冒烟测试和-smoke-testyaml-是什么)
+9. [冒烟测试通过后做什么](#9-冒烟测试通过后做什么)
 
 ---
 
@@ -1334,6 +1336,258 @@ curl -I http://172.25.254.10:30080
 ```
 
 如果第 6 步返回 `HTTP/1.1 200 OK`，说明从 API Server 到 NodePort 的主链路已经通了。
+
+---
+
+## 9. 冒烟测试通过后做什么
+
+### 问题
+
+`kubectl apply -f` 之后，Windows 主机能访问任意节点 IP:30080，能看到 nginx 欢迎页，没什么问题。下一步做什么？
+
+### 结论
+
+阶段 0–1 的**集群底座和网络主链路已经通了**。接下来不要再重复冒烟测试，进入资源基线：
+
+1. 创建 `aiops`、`demo`、`monitoring` 三个命名空间。
+2. 在 `demo` 和 `aiops` 设置 LimitRange 默认资源。
+3. 在 `demo` 设置 ResourceQuota。
+4. 验证默认值和配额。
+5. 收集阶段 0–1 验收输出，填验收文档。
+6. 三台 VM 打快照 `phase-1-k3s-ready`。
+
+先不要装 Prometheus。资源基线没做完就上监控，后面容易出现 Pod 被 OOM、配额不够、默认值不生效的问题。
+
+### 9.1 三个资源分别管什么
+
+| 资源 | 作用范围 | 作用 |
+|---|---|---|
+| Namespace | 集群级 | 隔离资源，方便按命名空间清理和配额 |
+| LimitRange | 单个命名空间 | 给没写 resources 的容器注入默认 requests/limits；限制单容器最大值 |
+| ResourceQuota | 单个命名空间 | 限制整个命名空间的总 requests/limits/Pod 数量 |
+
+关键区别：
+
+- **LimitRange 管“单个容器”**：默认给多少、最大能要多少。
+- **ResourceQuota 管“整个命名空间”**：所有 Pod 加起来不能超过多少。
+- LimitRange 只在**创建 Pod 时**注入默认值，不会修改已经存在的 Pod。
+- ResourceQuota 会把已有资源计入 `Used`，但不会因为超配额去驱逐已有 Pod；它主要拦截新建资源。
+
+### 9.2 应用三个清单
+
+以下假设三个文件已经放到 server 的 `/root/manifests/`。如果你在 server 上有仓库，把路径换成 `infra/manifests/` 即可。
+
+```bash
+kubectl apply -f /root/manifests/00-namespaces.yaml
+```
+
+预期：
+
+```text
+namespace/aiops created
+namespace/demo configured
+namespace/monitoring created
+```
+
+`demo` 可能显示 `unchanged` 或 `configured`，因为冒烟测试已经创建过它。
+
+```bash
+kubectl apply -f /root/manifests/01-limitrange.yaml
+```
+
+预期：
+
+```text
+limitrange/default-limits created
+limitrange/default-limits created
+```
+
+两个 `default-limits` 分别在 `aiops` 和 `demo`。
+
+```bash
+kubectl apply -f /root/manifests/02-resourcequota.yaml
+```
+
+预期：
+
+```text
+resourcequota/demo-quota created
+```
+
+### 9.3 验证命名空间
+
+```bash
+kubectl get ns
+```
+
+预期能看到：
+
+```text
+aiops
+demo
+monitoring
+```
+
+### 9.4 验证 LimitRange
+
+```bash
+kubectl describe limitrange -n demo
+```
+
+预期看到：
+
+```text
+Default Request:
+  cpu:     50m
+  memory:  64Mi
+Default:
+  cpu:     500m
+  memory:  256Mi
+Max:
+  cpu:     1
+  memory:  1Gi
+```
+
+`aiops` 里也有同样的限制：
+
+```bash
+kubectl describe limitrange -n aiops
+```
+
+### 9.5 验证 ResourceQuota
+
+```bash
+kubectl describe quota -n demo
+```
+
+预期看到 `Hard` 值：
+
+```text
+requests.cpu:     2
+requests.memory:  2Gi
+limits.cpu:       4
+limits.memory:    4Gi
+pods:             20
+```
+
+`Used` 里会显示当前 `demo` 的用量。冒烟测试的两个 `web` Pod 会计入：
+
+- requests：约 `100m` CPU、`128Mi` 内存
+- limits：约 `400m` CPU、`256Mi` 内存
+- Pod 数：`2`
+
+具体数值以实际输出为准。
+
+### 9.6 验证 LimitRange 默认值真的生效
+
+创建一个**不写 resources** 的临时 Pod：
+
+```bash
+kubectl run quota-check -n demo --image=nginx:1.27-alpine --restart=Never
+```
+
+预期：
+
+```text
+pod/quota-check created
+```
+
+查看它的 resources：
+
+```bash
+kubectl get pod quota-check -n demo -o jsonpath='{.spec.containers[0].resources}'; echo
+```
+
+预期包含：
+
+```json
+{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}
+```
+
+字段顺序可能不同，只要数值对得上就说明 LimitRange 生效了。
+
+再看一次配额，`Used` 里会多一个 Pod：
+
+```bash
+kubectl describe quota -n demo
+```
+
+删除临时 Pod：
+
+```bash
+kubectl delete pod quota-check -n demo
+```
+
+### 9.7 收集阶段 0–1 验收输出
+
+在 server 上：
+
+```bash
+kubectl version
+kubectl get nodes -o wide
+kubectl get pods -A -o wide
+kubectl get svc -A
+kubectl get pods -n demo -o wide
+curl -I http://172.25.254.10:30080
+kubectl describe limitrange -n demo
+kubectl describe quota -n demo
+free -h
+df -h
+systemctl status k3s --no-pager
+```
+
+在两个 worker 上分别执行：
+
+```bash
+free -h
+df -h
+systemctl status k3s-agent --no-pager
+```
+
+把这些输出贴回来，就可以把 `docs/02-lab/01-phase-0-1-acceptance.md` 里的 `<待填写>` 替换成真实结果。
+
+验收重点：
+
+- 三节点全部 `Ready`
+- 系统 Pod 全部 `Running`
+- `demo` 两个 `web` Pod 在 worker 上
+- `curl` 返回 `200 OK`
+- LimitRange 和 ResourceQuota 数值正确
+- server 可用内存大于 1 GB，worker 大于 800 MB
+
+### 9.8 打快照
+
+验收输出确认无误后，在 VMware 里给三台虚拟机分别打快照，命名：
+
+```text
+phase-1-k3s-ready
+```
+
+快照前先关机或暂停，避免磁盘状态不一致。
+
+### 常见问题
+
+**`kubectl run` 报 `exceeded quota`**
+
+说明临时 Pod 加上现有 `web` 的用量超过了 `demo-quota`。先看：
+
+```bash
+kubectl describe quota -n demo
+```
+
+按当前配置，默认的 `50m/64Mi` 请求应该还能放进去；如果放不进，说明 `web` 的副本数或资源被改过。
+
+**`kubectl describe limitrange` 看不到默认值**
+
+确认 Pod 和 LimitRange 在同一个命名空间。LimitRange 是命名空间级的，`demo` 里的规则不会作用到 `default` 命名空间。
+
+**Pod 创建成功但没有注入 resources**
+
+LimitRange 只对创建时没有写 resources 的容器生效。如果容器自己写了 `resources`，就用容器自己的值，不会被默认值覆盖。
+
+**`kubectl describe quota` 里 `Used` 是 0**
+
+配额刚创建、还没有统计到，或者 Pod 在其他命名空间。等几秒再看，并确认命名空间是 `demo`。
 
 ---
 
