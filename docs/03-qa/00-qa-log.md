@@ -2769,6 +2769,14 @@ Helm 没找到 kubeconfig，client-go 就回退到默认的 `http://localhost:80
 - 当前 shell 的 `HOME` 不是 `/root`，`~/.kube/config` 不存在。
 - k3s 的 kubeconfig 在 `/etc/rancher/k3s/k3s.yaml`，但没有复制到 `~/.kube/config`。
 
+k3s 还有一个容易误导的点：`/usr/local/bin/kubectl` 可能是指向 k3s 的软链，k3s 自带的 kubectl 会自动读 `/etc/rancher/k3s/k3s.yaml`。所以会出现：
+
+```text
+kubectl 能用，但 helm 报 localhost:8080
+```
+
+Helm 不会走 k3s 的这条特殊逻辑，它只认 `KUBECONFIG`、`--kubeconfig` 或 `~/.kube/config`。
+
 ### 诊断
 
 ```bash
@@ -2783,6 +2791,8 @@ ls -l /etc/rancher/k3s/k3s.yaml /root/.kube/config
 
 # 看 kubectl 是否是 alias 或 wrapper
 type kubectl
+ls -l /usr/local/bin/kubectl
+readlink -f /usr/local/bin/kubectl
 ```
 
 ### 修复 A：临时指定 kubeconfig
@@ -2799,7 +2809,9 @@ helm list -n monitoring
 ```bash
 mkdir -p /root/.kube
 ln -sf /etc/rancher/k3s/k3s.yaml /root/.kube/config
-chmod 600 /root/.kube/config
+
+# kubeconfig 里包含客户端证书，建议只让 root 读
+chmod 600 /etc/rancher/k3s/k3s.yaml
 ```
 
 然后验证：
