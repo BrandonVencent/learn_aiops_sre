@@ -38,6 +38,7 @@
 15. [阶段 2：指标链路计划](#15-阶段-2指标链路计划)
 16. [worker 节点需要装 Helm 吗](#16-worker-节点需要装-helm-吗)
 17. [helm lint 为什么不支持 --version](#17-helm-lint-为什么不支持---version)
+18. [values-kube-prometheus-stack.yaml 逐段解释](#18-values-kube-prometheus-stackyaml-逐段解释)
 
 ---
 
@@ -2662,6 +2663,84 @@ grep -nE 'nodePort: 300(30|90|93)|storage: (10Gi|1Gi)' /tmp/kps-rendered.yaml | 
 ```
 
 预期能看到 `30030`、`30090`、`30093` 和 `10Gi`、`1Gi`。如果看不到，说明 values 里的字段名和当前 chart 不匹配，需要对照默认 values 调整。
+
+---
+
+## 18. values-kube-prometheus-stack.yaml 逐段解释
+
+### 问题
+
+安装前想看明白 `values-kube-prometheus-stack.yaml` 每一段在做什么，而不是直接复制。
+
+### 结论
+
+完整逐段解释已写入：
+
+```text
+docs/02-lab/03-monitoring-values-explained.md
+```
+
+这里保留一个速查版。
+
+### 18.1 一句话总结
+
+这份 values 做四件事：
+
+1. 把监控组件放到 `monitoring` 命名空间。
+2. 给 Prometheus、Alertmanager、Grafana、KSM、node-exporter、Operator 设置 requests/limits。
+3. 用 `local-path` PVC 保存 Prometheus/Alertmanager/Grafana 数据。
+4. 用固定 NodePort 暴露 UI：Grafana `30030`、Prometheus `30090`、Alertmanager `30093`。
+
+### 18.2 关键段落
+
+| values 段 | 作用 |
+|---|---|
+| `prometheus.service` | 把 Prometheus UI/API 暴露成 NodePort `30090` |
+| `prometheus.prometheusSpec.retention` | 指标保留 7 天 |
+| `prometheus.prometheusSpec.retentionSize` | 数据最多 6 GB，超过就清理 |
+| `prometheus.prometheusSpec.scrapeInterval` | 每 15 秒抓一次 |
+| `prometheus.prometheusSpec.resources` | Prometheus 的 requests/limits |
+| `prometheus.prometheusSpec.storageSpec` | Prometheus 用 `local-path` 10Gi PVC |
+| `alertmanager.alertmanagerSpec` | Alertmanager 单副本、资源、1Gi PVC |
+| `grafana.persistence` | Grafana 用 1Gi PVC 保存 Dashboard/数据源 |
+| `grafana.defaultDashboardsEnabled` | 安装 chart 自带 Dashboard |
+| `kubeStateMetrics.resources` | 提供 `kube_*` 指标，比如重启计数 |
+| `prometheus-node-exporter.resources` | 每节点一个，提供 `node_*` 指标 |
+| `prometheusOperator.resources` | 监听 CRD，创建/更新 Prometheus/Alertmanager |
+| `kubeEtcd` 等四个开关 | 关闭 k3s 不存在的控制面 target，避免永久 down |
+
+### 18.3 为什么 Prometheus 用 1.2Gi limit
+
+Prometheus 内存和“活跃时间序列数量”强相关。这个实验只有三个节点、少量业务 Pod，300Mi request / 1.2Gi limit 足够。
+
+如果出现 `OOMKilled`：
+
+1. 先降 `retention` 或 `retentionSize`。
+2. 再减少抓取目标。
+3. 最后才考虑提高 memory limit。
+
+### 18.4 为什么用 local-path
+
+- k3s 自带 `local-path`，不需要额外装存储。
+- 数据落在 Pod 所在节点的本地目录。
+- `ReadWriteOnce` 只适合单副本；实验环境够用。
+- `local-path` 是 `WaitForFirstConsumer`，PVC 在 Pod 调度前显示 `Pending` 是正常的。
+
+### 18.5 为什么关掉 kubeEtcd/controller-manager/scheduler/kube-proxy
+
+k3s 把这些控制面组件编在 `k3s` 进程里，不像 kubeadm 那样有独立 Pod 和 metrics Service。保留对应 ServiceMonitor 会得到永久 down 的 target。
+
+保留 `kube-apiserver`、`kubelet`、`coreDns` 即可。
+
+### 18.6 一个需要留意的点
+
+当前 values 没有写 `nodeSelector`，调度器可能把 Prometheus 等组件放到 worker。设计上更希望它们放 server；如果安装后发现 Prometheus 在 worker，可以用：
+
+```bash
+kubectl get pods -n monitoring -o wide
+```
+
+确认位置，再通过 `helm upgrade` 加 `nodeSelector`。
 
 ---
 

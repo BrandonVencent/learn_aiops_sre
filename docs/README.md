@@ -11,7 +11,8 @@
 3. [AI 接入层](01-principles/02-aiops-ai-layer.md) —— RAG、告警增强、根因辅助、受控执行
 4. [生产环境与实验环境的差异](01-principles/03-production-vs-lab.md) —— 哪些能模拟，哪些不能
 5. [实验设计](02-lab/00-lab-design.md) —— VMware + Linux + K8s 的分阶段搭建方案
-6. [学习问答记录](03-qa/00-qa-log.md) —— 搭建过程中真实遇到的问题、当时的回答和可复现命令
+6. [kube-prometheus-stack values 解释](02-lab/03-monitoring-values-explained.md) —— 阶段 2 监控 values 逐段说明
+7. [学习问答记录](03-qa/00-qa-log.md) —— 搭建过程中真实遇到的问题、当时的回答和可复现命令
 
 ## 学习路线
 
