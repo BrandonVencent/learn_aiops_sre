@@ -11,8 +11,10 @@
 3. [AI 接入层](01-principles/02-aiops-ai-layer.md) —— RAG、告警增强、根因辅助、受控执行
 4. [生产环境与实验环境的差异](01-principles/03-production-vs-lab.md) —— 哪些能模拟，哪些不能
 5. [实验设计](02-lab/00-lab-design.md) —— VMware + Linux + K8s 的分阶段搭建方案
-6. [kube-prometheus-stack values 解释](02-lab/03-monitoring-values-explained.md) —— 阶段 2 监控 values 逐段说明
-7. [学习问答记录](03-qa/00-qa-log.md) —— 搭建过程中真实遇到的问题、当时的回答和可复现命令
+6. [阶段 0–1 验收记录](02-lab/01-phase-0-1-acceptance.md) —— 集群底座、冒烟测试和资源基线
+7. [阶段 2 指标链路验收记录](02-lab/02-phase-2-acceptance.md) —— Prometheus、Grafana、target 和重启计数实验
+8. [kube-prometheus-stack values 解释](02-lab/03-monitoring-values-explained.md) —— 阶段 2 监控 values 逐段说明
+9. [学习问答记录](03-qa/00-qa-log.md) —— 搭建过程中真实遇到的问题、当时的回答和可复现命令
 
 ## 学习路线
 
@@ -31,8 +33,8 @@
 
 - 宿主机：Windows，16 GB 内存，14 核 20 线程
 - 虚拟化：VMware Workstation，NAT 网络
-- 虚拟机：Ubuntu Server 24.04 LTS × 3
-- 内存分配：server 6 GB + worker 2 GB × 2，合计 10 GB
+- 虚拟机：Ubuntu Server 22.04.5 LTS × 3
+- 内存分配：server 6 GB + worker 3 GB × 2，合计 12 GB
 - 集群：k3s 三节点（控制面轻，适合 16 GB 宿主机）
 - 所有实验都围绕一个自写的 demo 服务展开，它同时提供 `/metrics`、结构化日志、健康检查和故障开关
 

@@ -120,6 +120,8 @@ k3s 不是「玩具」，它的 API、调度器、kubelet、CNI、RBAC 与标准
 
 ### 阶段 2：指标链路
 
+> 状态：已完成，验收记录见 [阶段 2 指标链路验收记录](02-phase-2-acceptance.md)。
+
 - 安装 kube-prometheus-stack（或手动装 Prometheus + Grafana + kube-state-metrics）。
 - 给所有组件设置资源限制。
 - 导入 Node Exporter、K8s 集群、Pod 资源面板。
