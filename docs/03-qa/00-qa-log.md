@@ -2,6 +2,7 @@
 
 > 记录时间：2026-10-21
 > 环境：Windows + VMware，Ubuntu Server 24.04 LTS，k3s 三节点
+> 当前 server 用户：root；server 上的命令默认不需要 `sudo`。
 > 约定：后续问答按日期追加到本文末尾；命令保留可复制形式；不记录 token、密码等敏感信息。
 
 这篇文档记录搭建 k3s 实验环境过程中真实遇到的问题、当时的回答和可复现的命令。它不是教程的替代品，而是用来回答「当时为什么这么做」。内容按问答整理，保留问题、结论、命令和验证方式，不完全逐字复刻聊天原文。
@@ -25,6 +26,7 @@
 7. [三节点 Ready 之后先做什么](#7-三节点-ready-之后先做什么)
 8. [冒烟测试和 smoke-test.yaml 是什么](#8-冒烟测试和-smoke-testyaml-是什么)
 9. [冒烟测试通过后做什么](#9-冒烟测试通过后做什么)
+10. [更正：server 当前使用 root](#10-更正server-当前使用-root)
 
 ---
 
@@ -822,7 +824,7 @@ cp /root/learn_aiops_sre/infra/manifests/smoke-test.yaml /root/smoke-test.yaml
 scp E:\learn_aiops_sre\infra\manifests\smoke-test.yaml root@172.25.254.10:/root/smoke-test.yaml
 ```
 
-如果 root 不允许 SSH，就先传到有权限的用户，再在 server 上 `sudo mv` 到 `/root`。
+当前 server 使用 root，直接写 `root@172.25.254.10`。如果 Windows 连 root 被拒绝（sshd 的 `PermitRootLogin` 没开），就用有 SSH 权限的普通用户传输，再在 server 上 `sudo mv` 到 `/root`。
 
 确认文件在 server 上：
 
@@ -1588,6 +1590,38 @@ LimitRange 只对创建时没有写 resources 的容器生效。如果容器自�
 **`kubectl describe quota` 里 `Used` 是 0**
 
 配额刚创建、还没有统计到，或者 Pod 在其他命名空间。等几秒再看，并确认命名空间是 `demo`。
+
+---
+
+## 10. 更正：server 当前使用 root
+
+### 更正
+
+之前示例里偶尔出现 `aiops@...` 的写法。当前 server 实际使用 **root** 登录，后续 server 上的命令直接用 root，不需要 `sudo`。
+
+### 影响
+
+- `scp` 目标改为：
+
+```powershell
+scp -r E:\learn_aiops_sre\infra\manifests root@172.25.254.10:/root/
+```
+
+- server 上执行 `kubectl`、`systemctl`、`tee`、`cat` 等命令不需要加 `sudo`。
+- 如果 Windows 连 root 被拒绝，说明 sshd 没允许 root 登录；这时用有 SSH 权限的普通用户传文件，再在 server 上 `sudo mv` 到 `/root`。这不影响后续集群操作。
+- 文档里的 `/root/...` 路径按当前 root 用户写；如果以后改用普通用户，把路径换成该用户的家目录。
+
+### 验证
+
+```bash
+whoami
+```
+
+预期：
+
+```text
+root
+```
 
 ---
 
