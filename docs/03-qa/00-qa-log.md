@@ -39,6 +39,7 @@
 16. [worker 节点需要装 Helm 吗](#16-worker-节点需要装-helm-吗)
 17. [helm lint 为什么不支持 --version](#17-helm-lint-为什么不支持---version)
 18. [values-kube-prometheus-stack.yaml 逐段解释](#18-values-kube-prometheus-stackyaml-逐段解释)
+19. [Helm 报 Kubernetes cluster unreachable: localhost:8080](#19-helm-报-kubernetes-cluster-unreachable-localhost8080)
 
 ---
 
@@ -2741,6 +2742,97 @@ kubectl get pods -n monitoring -o wide
 ```
 
 确认位置，再通过 `helm upgrade` 加 `nodeSelector`。
+
+---
+
+## 19. Helm 报 Kubernetes cluster unreachable: localhost:8080
+
+### 问题
+
+执行 `helm install` 时报：
+
+```text
+Error: INSTALLATION FAILED: Kubernetes cluster unreachable:
+Get "http://localhost:8080/version": dial tcp 127.0.0.1:8080: connect: connection refused
+```
+
+但同一台机器上 `kubectl get nodes` 是正常的。
+
+### 原因
+
+Helm 没找到 kubeconfig，client-go 就回退到默认的 `http://localhost:8080`。
+
+`kubectl` 能用，不代表 Helm 一定能找到同一个配置，常见情况：
+
+- `KUBECONFIG` 只在某个 shell/脚本里设置了。
+- `kubectl` 通过软链或 alias 找到了配置，Helm 没有。
+- 当前 shell 的 `HOME` 不是 `/root`，`~/.kube/config` 不存在。
+- k3s 的 kubeconfig 在 `/etc/rancher/k3s/k3s.yaml`，但没有复制到 `~/.kube/config`。
+
+### 诊断
+
+```bash
+# 看 KUBECONFIG 是否设置
+echo "$KUBECONFIG"
+
+# 看 kubectl 实际连的 API Server
+kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'; echo
+
+# 看 kubeconfig 文件是否存在
+ls -l /etc/rancher/k3s/k3s.yaml /root/.kube/config
+
+# 看 kubectl 是否是 alias 或 wrapper
+type kubectl
+```
+
+### 修复 A：临时指定 kubeconfig
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+helm list -n monitoring
+```
+
+如果 `helm list` 不再报错，就可以继续安装。
+
+### 修复 B：永久放到默认位置
+
+```bash
+mkdir -p /root/.kube
+ln -sf /etc/rancher/k3s/k3s.yaml /root/.kube/config
+chmod 600 /root/.kube/config
+```
+
+然后验证：
+
+```bash
+kubectl get nodes
+helm list -n monitoring
+```
+
+### 重新安装
+
+`helm install` 在连接 API Server 之前就失败了，通常不会留下 release。先确认：
+
+```bash
+helm list -n monitoring
+```
+
+没有 `kube-prometheus-stack` 后，再执行原来的安装命令。也可以显式传 kubeconfig：
+
+```bash
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --version 92.11.0 \
+  --kubeconfig /etc/rancher/k3s/k3s.yaml \
+  -f /root/monitoring/values-kube-prometheus-stack.yaml
+```
+
+### 注意
+
+- 不要把 `/root/.kube/config` 直接提交到 Git。
+- 如果从 Windows 使用 kubeconfig，要把 `server: https://127.0.0.1:6443` 改成 `https://172.25.254.10:6443`。
+- k3s 的 kubeconfig 里包含集群 CA 和客户端证书，按密钥对待。
 
 ---
 
