@@ -11,7 +11,7 @@
 - 三台 VM 的基线配置已完成：静态 IP、hostname、hosts、swap、内核模块、sysctl、apt、ufw。
 - `k8s-server` 已安装 k3s server。
 - 当前卡在系统镜像拉取：`rancher/mirrored-pause:3.10.2` 拉取失败，导致 CoreDNS、local-path-provisioner、metrics-server 无法启动。
-- 下一步：配置 Docker Hub 镜像加速，重启 k3s，确认系统 Pod 全部 `Running`，再加入两个 worker。
+- 下一步：按第 6 节执行——配置 Docker Hub 镜像加速，重启 k3s，确认系统 Pod 全部 `Running`，再加入两个 worker。
 
 ## 目录
 
@@ -20,6 +20,7 @@
 3. [pause 镜像拉不到怎么办](#3-pause-镜像拉不到怎么办)
 4. [什么时候加入 worker，三台都跑 server 吗](#4-什么时候加入-worker三台都跑-server-吗)
 5. [k3s 的网络是怎么通的，为什么看不到 Flannel](#5-k3s-的网络是怎么通的为什么看不到-flannel)
+6. [下一步做什么](#6-下一步做什么)
 
 ---
 
@@ -572,6 +573,177 @@ ss -lunp | grep 8472
 - `flannel.1` 网卡
 - `10.42.x.0/24 via 10.42.x.0 dev flannel.1` 这样的路由
 - Flannel 监听 UDP 8472
+
+---
+
+## 6. 下一步做什么
+
+### 问题
+
+k3s server 已经装好了，但系统 Pod 因为镜像拉取失败没起来。下一步是先加 worker，还是先修 server？
+
+### 结论
+
+**先修 server 的镜像，不要先加 worker。**
+
+worker 加入集群时同样要拉 pause、Flannel 等镜像。server 的镜像源没配好，worker 加进来也会一样失败，只会多一台有问题的节点。
+
+正确顺序：
+
+1. server 写 `registries.yaml`
+2. 重启 k3s
+3. 删除失败的 `kube-system` Pod
+4. 确认 `kube-system` 全部 `Running`
+5. 加入 worker-1
+6. 加入 worker-2
+7. 回 server 确认三节点 `Ready`
+
+### 第 1 步：确认当前状态
+
+在 server 上：
+
+```bash
+kubectl get nodes -o wide
+```
+
+```bash
+kubectl get pods -A -o wide
+```
+
+预期：
+
+- `k8s-server` 是 `Ready`
+- `kube-system` 里有 Pod 处于 `ImagePullBackOff` 或 `ErrImagePull`
+
+如果节点本身是 `NotReady`，先不要往下走，检查：
+
+```bash
+systemctl status k3s --no-pager
+```
+
+```bash
+journalctl -u k3s -n 100 --no-pager
+```
+
+### 第 2 步：写镜像加速配置
+
+```bash
+mkdir -p /etc/rancher/k3s
+```
+
+```bash
+tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
+mirrors:
+  docker.io:
+    endpoint:
+      - "https://docker.m.daocloud.io"
+      - "https://docker.1ms.run"
+EOF
+```
+
+确认内容：
+
+```bash
+cat /etc/rancher/k3s/registries.yaml
+```
+
+### 第 3 步：重启并清理失败 Pod
+
+```bash
+systemctl restart k3s
+```
+
+```bash
+systemctl is-active k3s
+```
+
+预期输出 `active`。
+
+等 20～30 秒，让 k3s 重新加载配置：
+
+```bash
+sleep 20
+```
+
+删除失败的 Pod，让它们按新配置重建：
+
+```bash
+kubectl delete pod -n kube-system --all
+```
+
+观察状态：
+
+```bash
+kubectl get pods -n kube-system -w
+```
+
+预期从 `ContainerCreating` 变成 `Running`。全部 `Running` 后按 `Ctrl+C`。
+
+### 第 4 步：验收 server
+
+```bash
+kubectl get nodes -o wide
+```
+
+```bash
+kubectl get pods -A -o wide
+```
+
+预期：
+
+- `k8s-server` 是 `Ready`
+- CoreDNS、local-path-provisioner、metrics-server、Traefik 都是 `Running`
+
+如果还是 `ImagePullBackOff`：
+
+```bash
+kubectl describe pod -n kube-system <Pod名>
+```
+
+```bash
+journalctl -u k3s -n 100 --no-pager
+```
+
+然后把 `registries.yaml` 的端点换成备用地址，再重启 k3s、删除 Pod：
+
+```bash
+tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
+mirrors:
+  docker.io:
+    endpoint:
+      - "https://dockerproxy.net"
+      - "https://docker.m.daocloud.io"
+EOF
+```
+
+```bash
+systemctl restart k3s
+```
+
+```bash
+kubectl delete pod -n kube-system --all
+```
+
+### 第 5 步：加入 worker
+
+只有第 4 步全部通过后再做。
+
+worker-1：
+
+- 写同样的 `registries.yaml`
+- `config.yaml` 写 `node-ip: "172.25.254.11"`
+- 从 server 取 token
+- 执行 `sh -s - agent --server https://172.25.254.10:6443 --token "$TOKEN"`
+
+worker-2 同理，`node-ip` 改成 `172.25.254.12`。
+
+完整命令见第 4 节「什么时候加入 worker」。
+
+### 当前不要做
+
+- 不要在 worker 上执行 `sh -s - server`，那会变成另一个独立集群。
+- 不要在 server 的 `kube-system` 还没全部 `Running` 时加入 worker。
+- 不要把真实 token 写进文档、截图或 Git。
 
 ---
 
