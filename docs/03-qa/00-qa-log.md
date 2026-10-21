@@ -10,8 +10,8 @@
 
 - 三台 VM 的基线配置已完成：静态 IP、hostname、hosts、swap、内核模块、sysctl、apt、ufw。
 - `k8s-server` 已安装 k3s server。
-- 当前卡在系统镜像拉取：`rancher/mirrored-pause:3.10.2` 拉取失败，导致 CoreDNS、local-path-provisioner、metrics-server 无法启动。
-- 下一步：按第 6 节执行——配置 Docker Hub 镜像加速，重启 k3s，确认系统 Pod 全部 `Running`，再加入两个 worker。
+- 镜像加速已配置，worker-1、worker-2 已加入；用户报告三节点都是 `Ready`。
+- 下一步：按第 7 节做冒烟测试，确认 Pod 网络、Service 和 NodePort 都通，再进入资源基线和验收。
 
 ## 目录
 
@@ -21,6 +21,7 @@
 4. [什么时候加入 worker，三台都跑 server 吗](#4-什么时候加入-worker三台都跑-server-吗)
 5. [k3s 的网络是怎么通的，为什么看不到 Flannel](#5-k3s-的网络是怎么通的为什么看不到-flannel)
 6. [下一步做什么](#6-下一步做什么)
+7. [三节点 Ready 之后先做什么](#7-三节点-ready-之后先做什么)
 
 ---
 
@@ -744,6 +745,209 @@ worker-2 同理，`node-ip` 改成 `172.25.254.12`。
 - 不要在 worker 上执行 `sh -s - server`，那会变成另一个独立集群。
 - 不要在 server 的 `kube-system` 还没全部 `Running` 时加入 worker。
 - 不要把真实 token 写进文档、截图或 Git。
+
+---
+
+## 7. 三节点 Ready 之后先做什么
+
+### 问题
+
+镜像源和配置文件都弄好了，两个 worker 也加入了，三节点都是 `Ready`。下一步是不是直接装 Prometheus？
+
+### 结论
+
+**先不要装监控。先做冒烟测试。**
+
+冒烟测试要确认三件事：
+
+1. Pod 能正常调度到 worker。
+2. Pod 网络能通。
+3. Service 和 NodePort 能从集群外访问。
+
+这三件事不通，后面装 Prometheus、Grafana、Loki 也会遇到网络问题，而且更难判断是监控配错了还是集群网络本身有问题。
+
+### 第 1 步：确认系统 Pod 也干净
+
+节点 `Ready` 不等于系统 Pod 都正常。先在 server 上跑：
+
+```bash
+kubectl get nodes -o wide
+```
+
+```bash
+kubectl get pods -A -o wide
+```
+
+```bash
+kubectl get pods -A --no-headers | grep -Ev 'Running|Completed' || true
+```
+
+预期：
+
+- 三行节点，全部 `Ready`，`INTERNAL-IP` 分别是 `.10`、`.11`、`.12`。
+- 最后一条命令没有输出。
+
+如果最后一条有输出，先处理这些 Pod，不要继续：
+
+```bash
+kubectl describe pod -n <命名空间> <Pod名>
+```
+
+```bash
+kubectl logs -n <命名空间> <Pod名> --tail=100
+```
+
+### 第 2 步：准备 smoke-test.yaml
+
+仓库里的清单在 `infra/manifests/smoke-test.yaml`。
+
+如果 server 上已经有仓库：
+
+```bash
+ls /root/learn_aiops_sre/infra/manifests/smoke-test.yaml
+```
+
+存在的话复制到 `/root`：
+
+```bash
+cp /root/learn_aiops_sre/infra/manifests/smoke-test.yaml /root/smoke-test.yaml
+```
+
+如果没有仓库，从 Windows 复制过去（PowerShell）：
+
+```powershell
+scp E:\learn_aiops_sre\infra\manifests\smoke-test.yaml root@172.25.254.10:/root/smoke-test.yaml
+```
+
+如果 root 不允许 SSH，就先传到有权限的用户，再在 server 上 `sudo mv` 到 `/root`。
+
+确认文件在 server 上：
+
+```bash
+ls -l /root/smoke-test.yaml
+```
+
+### 第 3 步：dry-run 和应用
+
+```bash
+kubectl apply --dry-run=client -f /root/smoke-test.yaml
+```
+
+预期：
+
+```text
+namespace/demo created (dry run)
+deployment.apps/web created (dry run)
+service/web created (dry run)
+```
+
+正式应用：
+
+```bash
+kubectl apply -f /root/smoke-test.yaml
+```
+
+### 第 4 步：验证 Pod、Service、NodePort
+
+```bash
+kubectl get pods -n demo -o wide
+```
+
+预期：两个 `web` Pod 都是 `Running`，尽量分别落在 `k8s-worker-1` 和 `k8s-worker-2`。
+
+```bash
+kubectl get svc -n demo
+```
+
+预期：`web` 是 `NodePort`，端口显示 `80:30080/TCP`。
+
+```bash
+kubectl get endpoints -n demo web
+```
+
+预期：`ENDPOINTS` 里有两个 Pod IP。
+
+```bash
+curl -I http://172.25.254.10:30080
+```
+
+预期：`HTTP/1.1 200 OK`。
+
+也可以从 Windows 浏览器访问：
+
+```text
+http://172.25.254.10:30080
+```
+
+### 常见错误
+
+**Pod 是 `ImagePullBackOff`**
+
+说明 worker 拉不到 `nginx:1.27-alpine`。检查：
+
+```bash
+kubectl describe pod -n demo <Pod名>
+```
+
+到对应 worker 上检查：
+
+```bash
+cat /etc/rancher/k3s/registries.yaml
+```
+
+```bash
+journalctl -u k3s-agent -n 100 --no-pager
+```
+
+确认两个 worker 都写了镜像加速配置。改完后重启 agent：
+
+```bash
+systemctl restart k3s-agent
+```
+
+**`curl` 连接失败**
+
+先看 Service 和 Endpoints：
+
+```bash
+kubectl get svc -n demo
+kubectl get endpoints -n demo web
+```
+
+再看节点有没有监听 30080：
+
+```bash
+ss -lntp | grep 30080
+```
+
+检查 ufw：
+
+```bash
+ufw status
+```
+
+实验环境应该关闭 ufw。如果 Endpoints 为空，说明 Service 的 selector 没匹配到 Pod。
+
+**Pod 一直 `Pending`**
+
+```bash
+kubectl describe pod -n demo <Pod名>
+```
+
+重点看 `Events` 里的调度失败原因、资源不足、节点 taint。
+
+**两个 Pod 都在同一台 worker**
+
+不是冒烟失败。`smoke-test.yaml` 用的是 `ScheduleAnyway`，只做尽量打散。阶段 2 需要严格分布时，再改成 `DoNotSchedule` 或加 podAntiAffinity。
+
+### 通过之后
+
+下一步是资源基线：
+
+1. 应用 `00-namespaces.yaml`、`01-limitrange.yaml`、`02-resourcequota.yaml`。
+2. 验证 LimitRange 默认值和 ResourceQuota。
+3. 收集验收输出，填写 `docs/02-lab/01-phase-0-1-acceptance.md`。
+4. 三台 VM 打快照 `phase-1-k3s-ready`。
 
 ---
 
