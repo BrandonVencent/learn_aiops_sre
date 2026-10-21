@@ -40,6 +40,7 @@
 17. [helm lint 为什么不支持 --version](#17-helm-lint-为什么不支持---version)
 18. [values-kube-prometheus-stack.yaml 逐段解释](#18-values-kube-prometheus-stackyaml-逐段解释)
 19. [Helm 报 Kubernetes cluster unreachable: localhost:8080](#19-helm-报-kubernetes-cluster-unreachable-localhost8080)
+20. [registry.k8s.io 镜像拉不下来](#20-registryk8sio-镜像拉不下来)
 
 ---
 
@@ -2855,6 +2856,109 @@ helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
 - 不要把 `/root/.kube/config` 直接提交到 Git。
 - 如果从 Windows 使用 kubeconfig，要把 `server: https://127.0.0.1:6443` 改成 `https://172.25.254.10:6443`。
 - k3s 的 kubeconfig 里包含集群 CA 和客户端证书，按密钥对待。
+
+---
+
+## 20. registry.k8s.io 镜像拉不下来
+
+### 问题
+
+kube-state-metrics Pod 一直是 `ImagePullBackOff`，事件里看到：
+
+```text
+failed to pull and unpack image "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0"
+failed to resolve reference ...
+dial tcp 142.251.188.82:443: connect: connection refused
+```
+
+### 原因
+
+`registry.k8s.io` 会重定向到 Google 的 Artifact Registry，当前网络访问不了。
+
+之前的 `registries.yaml` 只给 `docker.io` 配了镜像加速，没有给 `registry.k8s.io` 配。
+
+### 修复：给 registry.k8s.io 加镜像
+
+编辑每台节点的：
+
+```text
+/etc/rancher/k3s/registries.yaml
+```
+
+在 `mirrors:` 下面加：
+
+```yaml
+mirrors:
+  docker.io:
+    endpoint:
+      - "https://docker.m.daocloud.io"
+      - "https://docker.1ms.run"
+
+  registry.k8s.io:
+    endpoint:
+      - "https://k8s.m.daocloud.io"
+```
+
+注意缩进：`registry.k8s.io:` 和 `docker.io:` 同级，`endpoint:` 再缩进两格。
+
+三台节点都要有这份配置。server 上改好后，可以复制到 worker：
+
+```bash
+scp /etc/rancher/k3s/registries.yaml root@172.25.254.11:/etc/rancher/k3s/registries.yaml
+scp /etc/rancher/k3s/registries.yaml root@172.25.254.12:/etc/rancher/k3s/registries.yaml
+```
+
+然后重启：
+
+```bash
+# server
+systemctl restart k3s
+```
+
+两个 worker 上分别执行：
+
+```bash
+systemctl restart k3s-agent
+```
+
+### 验证镜像能拉
+
+在 server 上：
+
+```bash
+k3s crictl pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0
+```
+
+如果镜像加速生效，会看到拉取成功。
+
+然后删除 KSM Pod，让 Deployment 重建：
+
+```bash
+kubectl delete pod -n monitoring -l app.kubernetes.io/name=kube-state-metrics
+kubectl get pods -n monitoring -w
+```
+
+### 备选：直接改 chart 镜像地址
+
+如果不想改 `registries.yaml`，也可以只给 KSM 指定镜像：
+
+```yaml
+kubeStateMetrics:
+  image:
+    repository: k8s.m.daocloud.io/kube-state-metrics/kube-state-metrics
+    tag: v2.20.0
+```
+
+然后：
+
+```bash
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --version 92.11.0 \
+  -f /root/monitoring/values-kube-prometheus-stack.yaml
+```
+
+这个办法只解决 KSM；以后其他 `registry.k8s.io` 镜像还会遇到同样问题。优先用 `registries.yaml`。
 
 ---
 
