@@ -1,6 +1,6 @@
 # 阶段 0–1 验收记录
 
-> 状态：集群底座、冒烟测试和资源基线已通过；待补充 LimitRange 默认值注入证据和三台 VM 快照。
+> 状态：集群底座、冒烟测试、资源基线和 LimitRange 默认值注入已通过；待补充三台 VM 快照。
 
 ## 环境
 
@@ -23,7 +23,7 @@
 - [x] `kubectl get nodes` 三节点全部 `Ready`
 - [x] `demo/web` 两个 Pod 在不同节点运行
 - [x] `curl http://172.25.254.10:30080` 返回 `200`
-- [ ] `demo` 的 LimitRange 默认值注入已验证
+- [x] `demo` 的 LimitRange 默认值注入已验证
 - [x] `demo` 的 ResourceQuota 生效
 - [ ] 三台虚拟机都有快照 `phase-1-k3s-ready`
 
@@ -132,7 +132,7 @@ Quota 的 `Used` 正好对应两个 `web` Pod：
   pods:     2
 ```
 
-LimitRange 的默认值已通过 `describe` 确认；还需要创建一个不带 `resources` 的临时 Pod，确认默认值真的注入到容器里。
+LimitRange 的默认值已通过临时 Pod 验证：创建 `quota-check` 时没有写 `resources`，Pod 的容器自动获得 `requests 50m/64Mi`、`limits 500m/256Mi`。删除后配额回到基线。
 
 ### 内存与磁盘余量
 
@@ -166,7 +166,7 @@ LimitRange 的默认值已通过 `describe` 确认；还需要创建一个不带
 
 ## 待完成
 
-- [ ] 运行临时 Pod，记录 LimitRange 默认值注入结果。
+- [x] 运行临时 Pod，记录 LimitRange 默认值注入结果。
 - [ ] 三台 VM 打快照 `phase-1-k3s-ready`。
 
 ### LimitRange 默认值注入验证命令
@@ -196,6 +196,18 @@ kubectl describe quota -n demo
 ```bash
 kubectl delete pod quota-check -n demo
 ```
+
+实际结果（2026-10-21）：
+
+```text
+创建 quota-check 后：
+pods 3，requests 150m/192Mi，limits 900m/512Mi
+
+删除 quota-check 后：
+pods 2，requests 100m/128Mi，limits 400m/256Mi
+```
+
+说明默认值确实注入到了临时 Pod，并且删除后配额恢复。
 
 ### 快照
 

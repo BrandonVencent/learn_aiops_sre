@@ -52,7 +52,7 @@ kubectl get pods -A --no-headers | grep -Ev 'Running|Completed' || true
 
 Expected: 三个节点 `Ready`；第二条命令没有输出。
 
-- [ ] **Step 2: 验证 LimitRange 默认值注入**
+- [x] **Step 2: 验证 LimitRange 默认值注入**
 
 ```bash
 kubectl run quota-check -n demo --image=nginx:1.27-alpine --restart=Never
