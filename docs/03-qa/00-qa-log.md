@@ -2814,9 +2814,19 @@ ln -sf /etc/rancher/k3s/k3s.yaml /root/.kube/config
 chmod 600 /etc/rancher/k3s/k3s.yaml
 ```
 
+`echo "$KUBECONFIG"` 为空是正常的。Helm 的 kubeconfig 查找顺序大致是：
+
+1. 命令行 `--kubeconfig`
+2. 环境变量 `KUBECONFIG`
+3. 默认的 `~/.kube/config`
+
+所以即使 `KUBECONFIG` 没设置，只要 `/root/.kube/config` 存在，Helm 也能找到集群。软链就是让这个默认路径存在。
+
 然后验证：
 
 ```bash
+ls -l /root/.kube/config
+readlink -f /root/.kube/config
 kubectl get nodes
 helm list -n monitoring
 ```
