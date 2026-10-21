@@ -22,6 +22,7 @@
 5. [k3s 的网络是怎么通的，为什么看不到 Flannel](#5-k3s-的网络是怎么通的为什么看不到-flannel)
 6. [下一步做什么](#6-下一步做什么)
 7. [三节点 Ready 之后先做什么](#7-三节点-ready-之后先做什么)
+8. [冒烟测试和 smoke-test.yaml 是什么](#8-冒烟测试和-smoke-testyaml-是什么)
 
 ---
 
@@ -948,6 +949,391 @@ kubectl describe pod -n demo <Pod名>
 2. 验证 LimitRange 默认值和 ResourceQuota。
 3. 收集验收输出，填写 `docs/02-lab/01-phase-0-1-acceptance.md`。
 4. 三台 VM 打快照 `phase-1-k3s-ready`。
+
+---
+
+## 8. 冒烟测试和 smoke-test.yaml 是什么
+
+### 问题
+
+介绍一下这个冒烟测试和 `smoke-test.yaml`。
+
+### 一句话结论
+
+冒烟测试是部署完成后的**最小可用性检查**。它不证明业务逻辑正确，只回答一个问题：这套系统最基本的链路是不是通的。
+
+`smoke-test.yaml` 用三个对象做这件事：
+
+| 对象 | 作用 |
+|---|---|
+| `Namespace demo` | 给测试资源一个独立命名空间 |
+| `Deployment web` | 跑 2 个 nginx Pod，验证调度、镜像拉取、容器启动 |
+| `Service web` | 用 NodePort 30080 暴露，验证 Service、Endpoints、kube-proxy |
+
+它验证的链路是：
+
+```text
+kubectl apply
+  -> API Server
+  -> Deployment 控制器
+  -> ReplicaSet
+  -> Scheduler 选节点
+  -> kubelet
+  -> containerd 拉镜像、起容器
+  -> CNI 分配 Pod IP
+  -> readinessProbe 通过
+  -> Endpoints 加入 Pod IP
+  -> kube-proxy 写 NodePort 规则
+  -> curl 节点 IP:30080 返回 200
+```
+
+### 8.1 什么是「冒烟测试」
+
+这个词来自硬件：新板子第一次通电，如果没冒烟，至少说明供电没炸。软件里的冒烟测试借用了这个意思：部署后先做一组很小的检查，确认系统没有“一上来就完全不可用”。
+
+它和生产级测试的区别：
+
+| | 冒烟测试 | 完整测试 |
+|---|---|---|
+| 目标 | 基本链路是否通 | 功能、性能、高可用、边界条件 |
+| 规模 | 很小，几分钟 | 可能几小时 |
+| 失败含义 | 先别继续，基础有问题 | 某个具体功能有问题 |
+| 这次检查 | Pod 能否跑、Service 能否访问 | 业务逻辑、压测、故障注入 |
+
+所以这一步通过，不代表集群“生产可用”，只代表可以继续做监控实验。
+
+### 8.2 清单结构
+
+`smoke-test.yaml` 是一个多文档 YAML，用 `---` 分隔三个 Kubernetes 对象：
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: demo
+...
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: demo
+...
+```
+
+`kubectl apply -f` 会按顺序处理这三个对象。
+
+### 8.3 Namespace：为什么还要建 demo
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+```
+
+Namespace 是资源隔离的边界。把测试服务放在 `demo` 里，后面做资源配额、LimitRange、清理实验资源时都方便。
+
+仓库里的 `00-namespaces.yaml` 也会创建 `demo`。两边重复不冲突，`kubectl apply` 是幂等的：已存在就更新，不存在就创建。
+
+### 8.4 Deployment：它到底管什么
+
+Deployment 的职责是**维持期望状态**：你说要 2 个副本，它就让集群里一直有 2 个匹配的 Pod。Pod 挂了，ReplicaSet 会补一个。
+
+关键字段：
+
+```yaml
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+```
+
+#### replicas: 2
+
+用两个副本有三个目的：
+
+1. 验证多 Pod 调度，不只是单 Pod 能跑。
+2. 验证 Service 能把流量分到多个 Endpoints。
+3. 观察两个副本会不会被分散到不同 worker。
+
+#### selector 和 template labels
+
+`selector.matchLabels.app: web` 必须和 `template.metadata.labels.app: web` 对得上。
+
+如果两边不一致，API Server 会直接拒绝：
+
+```text
+Deployment.apps "web" is invalid: spec.template.metadata.labels:
+Invalid value: ...: `selector` does not match template `labels`
+```
+
+这是新手很常见的一个错误：改了 Pod 标签，忘了改 selector。
+
+#### nodeAffinity：尽量不调度到 server
+
+```yaml
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: node-role.kubernetes.io/control-plane
+              operator: DoesNotExist
+```
+
+意思是：**优先**选择没有 `control-plane` 标签的节点，也就是两个 worker。
+
+注意这里是 `preferred`，不是 `required`：
+
+- worker 资源够：两个 Pod 去 worker。
+- worker 资源不够或有 taint：Pod 仍然可以落到 server，不会一直 Pending。
+
+为什么不让业务 Pod 跑 server？因为 server 只有 6GB，后面还要放 Prometheus、Grafana、Loki 等监控组件。业务 Pod 尽量放 worker，资源更清楚。
+
+#### topologySpreadConstraints：尽量打散
+
+```yaml
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app: web
+```
+
+- `topologyKey: kubernetes.io/hostname`：按节点打散。
+- `maxSkew: 1`：两个节点上的 Pod 数量差尽量不超过 1。
+- `whenUnsatisfiable: ScheduleAnyway`：做不到也不阻塞调度，只是“尽量”。
+
+所以两个 Pod 最好分别在 worker-1 和 worker-2。如果都在同一台，也不算冒烟失败。后面需要严格分布时，可以改成 `DoNotSchedule` 或加 podAntiAffinity。
+
+#### 容器镜像和端口
+
+```yaml
+containers:
+  - name: web
+    image: nginx:1.27-alpine
+    ports:
+      - name: http
+        containerPort: 80
+```
+
+- `nginx:1.27-alpine`：小、启动快、默认首页返回 200，适合做冒烟镜像。
+- `containerPort: 80`：声明容器监听 80，并给它起名 `http`。
+- `containerPort` 本身**不负责暴露端口**。真正让流量进来的是 Pod IP + Service + kube-proxy。命名端口的作用是让 Service 的 `targetPort` 和探针可以直接写 `http`。
+
+#### resources：requests 和 limits
+
+```yaml
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+```
+
+- `requests`：调度依据。Scheduler 会找至少有 50m CPU、64Mi 内存的节点。
+- `limits`：运行上限。CPU 超了会被限流，内存超了可能被 OOMKilled。
+
+`50m` 是 0.05 核，不是 50 核。`64Mi` 是 64 兆字节。
+
+这两个值也是后面 LimitRange 和 ResourceQuota 实验的参照。没有 requests/limits 的 Pod，在配额命名空间里可能直接被拒绝。
+
+#### readinessProbe：什么时候算“可以接流量”
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+```
+
+kubelet 会在容器启动 2 秒后，每 5 秒请求一次 `http://PodIP:80/`。
+
+- 返回 2xx/3xx：Pod 变成 `Ready`，Endpoints 把它加入。
+- 返回失败：Pod 还是 `Running`，但 `READY` 是 `0/1`，Service 不会把流量发给它。
+
+这就是为什么有时候 `kubectl get pods` 显示 `Running`，但 `curl` 还是 503：Pod 没 Ready，Endpoints 是空的。
+
+这里没有配 livenessProbe。对 nginx 这种简单服务，readiness 已经够用；liveness 配不好反而会导致无意义重启。
+
+### 8.5 Service：NodePort 怎么把流量送进去
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: demo
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+```
+
+逐项解释：
+
+| 字段 | 值 | 作用 |
+|---|---|---|
+| `type` | `NodePort` | 在每个节点上开一个端口，外部可以通过节点 IP 访问 |
+| `selector` | `app: web` | 选中带 `app=web` 标签的 Pod |
+| `port` | `80` | Service 自己的 ClusterIP 端口 |
+| `targetPort` | `http` | 转发到容器名为 `http` 的端口，也就是 80 |
+| `nodePort` | `30080` | 节点上固定的对外端口，范围默认 30000–32767 |
+
+Service 不直接创建 Pod，它只是一个“虚拟入口”。真正干活的是：
+
+1. Endpoints/EndpointSlice 控制器发现 Ready 的 Pod，把 Pod IP 写进 Endpoints。
+2. 每个节点上的 kube-proxy 写 iptables/IPVS 规则。
+3. 访问 `节点IP:30080` 时，规则把流量 DNAT 到某个 Pod IP:80。
+
+k3s 把 kube-proxy 编进了 k3s 进程，所以 `kubectl get pods -n kube-system` 看不到 kube-proxy Pod，但规则是存在的。
+
+NodePort 在**每台节点**上都可用，不只 server。也就是说下面三个地址理论上都能访问：
+
+```text
+http://172.25.254.10:30080
+http://172.25.254.11:30080
+http://172.25.254.12:30080
+```
+
+只要防火墙允许。
+
+### 8.6 apply 之后发生了什么
+
+```text
+kubectl apply -f smoke-test.yaml
+  │
+  ├─ API Server 校验并保存 Namespace / Deployment / Service
+  │
+  ├─ Deployment 控制器创建 ReplicaSet
+  │     └─ ReplicaSet 创建 2 个 Pod
+  │
+  ├─ Scheduler 选节点
+  │     ├─ 看 nodeAffinity（尽量避开 control-plane）
+  │     ├─ 看 topologySpread（尽量打散）
+  │     └─ 看 requests（节点资源够不够）
+  │
+  ├─ kubelet 调用 containerd
+  │     ├─ 拉 pause 沙箱镜像
+  │     ├─ 拉 nginx:1.27-alpine
+  │     └─ 创建容器
+  │
+  ├─ CNI（Flannel）给 Pod 分配 10.42.x.x
+  │
+  ├─ nginx 启动，readinessProbe GET / 返回 200
+  │     └─ Pod 变成 Ready
+  │
+  ├─ Endpoints 控制器把 2 个 Pod IP 加入 Service
+  │
+  └─ kube-proxy 写入 NodePort 30080 的转发规则
+        └─ curl 节点IP:30080 -> DNAT -> PodIP:80 -> 200
+```
+
+这条链路里任何一环坏了，表现都不一样。所以冒烟测试的价值不只是“最后 200”，而是能定位到哪一层出了问题。
+
+### 8.7 结果怎么读
+
+| 现象 | 大概率原因 | 先看什么 |
+|---|---|---|
+| Pod `Pending` | 没有节点能满足调度 | `kubectl describe pod -n demo <Pod>` 的 Events |
+| `ImagePullBackOff` / `ErrImagePull` | 镜像拉不到、仓库配置不对 | `describe`，worker 的 `registries.yaml`，`journalctl -u k3s-agent` |
+| `CrashLoopBackOff` | 容器启动后退出 | `kubectl logs -n demo <Pod>` |
+| `Running` 但 `READY 0/1` | readinessProbe 失败 | `describe`，`kubectl logs`，进容器 `curl localhost` |
+| Service 没有 Endpoints | selector 不匹配，或 Pod 没 Ready | `kubectl get pods -n demo --show-labels`，`kubectl get endpoints -n demo web` |
+| `curl` 连接被拒绝 | NodePort 没监听、防火墙、IP 错 | `ss -lntp \| grep 30080`，`ufw status` |
+| `curl` 返回 503 | Endpoints 为空或全部未 Ready | `kubectl get endpoints -n demo web` |
+| `curl` 返回 404 | 路径不对 | 试 `curl -I http://...:30080/` |
+
+一个容易混淆的点：
+
+- `Running` 只表示容器进程在跑。
+- `Ready` 才表示 readinessProbe 通过，可以接流量。
+- `kubectl get pods` 的 `READY` 列是 `就绪容器数/总容器数`。
+
+### 8.8 这个测试覆盖了什么，没覆盖什么
+
+覆盖：
+
+- API Server 能接收资源
+- Deployment/ReplicaSet 控制器工作
+- Scheduler 能调度
+- kubelet 能启动 Pod
+- containerd 能拉镜像
+- Flannel/CNI 能给 Pod 分配 IP
+- readinessProbe 能工作
+- Service/Endpoints 能生成
+- kube-proxy/NodePort 能把外部流量转进 Pod
+
+没覆盖：
+
+- **DNS**：nginx 不需要解析域名，所以这个测试没验证 CoreDNS。
+- **Ingress/Traefik**：走的是 NodePort，不是 Ingress。
+- **持久化存储**：没有 PVC。
+- **NetworkPolicy**：没有策略。
+- **ResourceQuota/LimitRange**：下一阶段单独验证。
+- **HPA/指标**：metrics-server 还没参与。
+- **跨节点 Pod 直连**：NodePort 可能转到任意节点上的 Pod，但不是专门测 Pod-to-Pod。
+- **性能和稳定性**：没有压测、没有故障注入。
+
+所以它叫“冒烟”，不叫“验收全部功能”。
+
+### 8.9 为什么这样设计
+
+- **2 个副本**：能看出调度和 Service 负载均衡，不是单 Pod 自嗨。
+- **nginx alpine**：镜像小、启动快、默认页稳定返回 200。
+- **soft spread**：两台 worker 的实验环境，硬性打散容易因为一台资源不足而 Pending。
+- **preferred 避开 server**：业务尽量在 worker，但不把调度卡死。
+- **requests/limits**：提前暴露资源问题，也为后面的配额实验做铺垫。
+- **readinessProbe**：确保 Service 只把流量发给真正准备好的 Pod。
+- **NodePort**：不需要云 LoadBalancer，也不需要先装 Ingress，最适合本地实验。
+
+### 8.10 实操命令
+
+```bash
+# 1. 客户端 dry-run，先看 YAML 有没有明显语法问题
+kubectl apply --dry-run=client -f /root/smoke-test.yaml
+
+# 2. 正式应用
+kubectl apply -f /root/smoke-test.yaml
+
+# 3. 看 Pod 落在哪台节点
+kubectl get pods -n demo -o wide
+
+# 4. 看 Service 的 NodePort
+kubectl get svc -n demo
+
+# 5. 看 Endpoints 是否有两个 Pod IP
+kubectl get endpoints -n demo web
+
+# 6. 从集群外访问
+curl -I http://172.25.254.10:30080
+```
+
+如果第 6 步返回 `HTTP/1.1 200 OK`，说明从 API Server 到 NodePort 的主链路已经通了。
 
 ---
 
