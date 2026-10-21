@@ -41,6 +41,7 @@
 18. [values-kube-prometheus-stack.yaml 逐段解释](#18-values-kube-prometheus-stackyaml-逐段解释)
 19. [Helm 报 Kubernetes cluster unreachable: localhost:8080](#19-helm-报-kubernetes-cluster-unreachable-localhost8080)
 20. [registry.k8s.io 镜像拉不下来](#20-registryk8sio-镜像拉不下来)
+21. [Grafana 反复重启：OOMKilled](#21-grafana-反复重启oomkilled)
 
 ---
 
@@ -2478,7 +2479,7 @@ docs/superpowers/plans/2026-10-21-metrics-pipeline.md
 | 抓取间隔 | 15 秒 |
 | 存储 | `local-path` PVC：Prometheus 10Gi、Alertmanager 1Gi、Grafana 1Gi |
 | k3s 控制面 target | 关闭 etcd/controller-manager/scheduler/kube-proxy，因为它们编在 k3s 进程里，没有独立 metrics 端点 |
-| 资源限制 | Prometheus 300Mi request / 1.2Gi limit；Grafana 128Mi/256Mi；Alertmanager 64Mi/128Mi |
+| 资源限制 | Prometheus 300Mi request / 1.2Gi limit；Grafana 256Mi/512Mi（原 128Mi/256Mi 会 OOMKilled）；Alertmanager 64Mi/128Mi |
 
 ### 15.3 执行前的 gate
 
@@ -2959,6 +2960,78 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
 ```
 
 这个办法只解决 KSM；以后其他 `registry.k8s.io` 镜像还会遇到同样问题。优先用 `registries.yaml`。
+
+---
+
+## 21. Grafana 反复重启：OOMKilled
+
+### 问题
+
+Grafana 有时候会重启，事件里反复出现：
+
+```text
+Readiness probe failed: Get "http://10.42.0.85:3000/api/health": connect: connection refused
+Back-off restarting failed container grafana
+```
+
+Pod 的 `RESTARTS` 变成 3。
+
+### 根因
+
+`kubectl describe pod` 里看到：
+
+```text
+Last State: Terminated
+  Reason: OOMKilled
+  Exit Code: 137
+```
+
+真正原因不是 readiness probe。readiness 失败只会把 Pod 从 Service endpoints 摘掉，不会重启容器。
+
+重启来自 OOM：Grafana 13.2.4 启动时加载 56 个插件，原来的 memory limit `256Mi` 不够，容器在启动过程中被内核杀掉。
+
+### 修复
+
+把 Grafana 的内存调整成：
+
+```yaml
+grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+```
+
+然后 upgrade：
+
+```bash
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --version 92.11.0 \
+  -f /root/monitoring/values-kube-prometheus-stack.yaml
+```
+
+### 验证
+
+```bash
+helm list -n monitoring
+kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana -w
+kubectl top pod -n monitoring -l app.kubernetes.io/name=grafana --containers
+```
+
+预期：
+
+- Helm revision 变成 2，`STATUS: deployed`。
+- Grafana 新 Pod `Running`，`RESTARTS` 保持 0。
+- `kubectl top` 显示的 memory 低于 512Mi。
+- 再 `kubectl describe pod`，`Last State` 不再出现 `OOMKilled`。
+
+### 注意
+
+如果 512Mi 还 OOM，再提高到 768Mi。一次只改一个参数，才能判断是否真的解决。
 
 ---
 

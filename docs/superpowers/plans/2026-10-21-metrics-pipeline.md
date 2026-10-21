@@ -219,10 +219,11 @@ grafana:
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 200m
-      memory: 256Mi
+      # Grafana 13.2.4 加载 56 个插件，256Mi 会 OOMKilled，调到 512Mi
+      memory: 512Mi
   persistence:
     enabled: true
     storageClassName: local-path

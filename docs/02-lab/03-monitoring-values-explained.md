@@ -186,14 +186,15 @@ grafana:
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 200m
-      memory: 256Mi
+      memory: 512Mi
 ```
 
-- Grafana 是 Go 应用，256Mi 对几个 Dashboard 够用。
-- 如果后面装很多插件或导入大量 Dashboard，再提高 limit。
+- Grafana 13.2.4 在启动时会加载 56 个插件，256Mi limit 下出现过 OOMKilled（Exit Code 137）。
+- 所以把 request 提到 256Mi，limit 提到 512Mi。
+- 如果后面装更多插件或导入大量 Dashboard，再继续提高 limit。
 
 ```yaml
   persistence:
@@ -313,11 +314,11 @@ k3s 和标准 kubeadm 集群不一样：
 |---|---:|---:|
 | Prometheus | 200m | 300Mi |
 | Alertmanager | 50m | 64Mi |
-| Grafana | 50m | 128Mi |
+| Grafana | 50m | 256Mi |
 | kube-state-metrics | 10m | 64Mi |
 | node-exporter × 3 | 30m | 96Mi |
 | Prometheus Operator | 50m | 64Mi |
-| **合计** | **390m** | **716Mi** |
+| **合计** | **390m** | **844Mi** |
 
 按 limits 估算：
 
@@ -325,11 +326,11 @@ k3s 和标准 kubeadm 集群不一样：
 |---|---:|---:|
 | Prometheus | 1 | 1200Mi |
 | Alertmanager | 200m | 128Mi |
-| Grafana | 200m | 256Mi |
+| Grafana | 200m | 512Mi |
 | kube-state-metrics | 100m | 128Mi |
 | node-exporter × 3 | 300m | 192Mi |
 | Prometheus Operator | 200m | 128Mi |
-| **合计** | **2.0** | **约 2.0Gi** |
+| **合计** | **2.0** | **约 2.2Gi** |
 
 server 当前 `available` 约 4.3 GiB，放下这些 limits 还有余量。limits 是上限，不是实际一直占用；实际使用通常低于 limits。
 
