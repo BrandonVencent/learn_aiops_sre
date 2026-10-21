@@ -1,0 +1,16 @@
+# Secrets and local state
+*.token
+*kubeconfig*
+.kube/
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Agent scratch space
+.superpowers/
