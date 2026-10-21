@@ -13,7 +13,8 @@
 - `k8s-server` 已安装 k3s server。
 - 镜像加速已配置，worker-1、worker-2 已加入；用户报告三节点都是 `Ready`。
 - 冒烟测试已通过：Windows 主机可访问任意节点 IP:30080，能看到 nginx 欢迎页。
-- 下一步：应用并验证命名空间、LimitRange、ResourceQuota（第 9 节），然后收集阶段 0–1 验收输出并打快照。
+- 资源基线已应用并验证：LimitRange 默认值 `50m/64Mi`、默认限制 `500m/256Mi`、单容器最大 `1/1Gi`；`demo-quota` 当前 Used 为 2 个 Pod、`100m/128Mi` requests、`400m/256Mi` limits。
+- 下一步：验证临时 Pod 的默认值注入，然后收集阶段 0–1 验收输出并打快照。
 
 ## 目录
 
@@ -29,6 +30,7 @@
 10. [更正：server 当前使用 root](#10-更正server-当前使用-root)
 11. [三个资源 YAML 逐行解释](#11-三个资源-yaml-逐行解释)
 12. [资源清单解释完之后下一步做什么](#12-资源清单解释完之后下一步做什么)
+13. [LimitRange 和 Quota 输出确认后下一步](#13-limitrange-和-quota-输出确认后下一步)
 
 ---
 
@@ -2172,6 +2174,151 @@ kubectl delete pod quota-check -n demo
 3. 三台 VM 打快照 `phase-1-k3s-ready`。
 
 验收命令见第 9.7 节。
+
+---
+
+## 13. LimitRange 和 Quota 输出确认后下一步
+
+### 问题
+
+`kubectl describe limitrange -n demo` 和 `kubectl describe quota -n demo` 的输出如上，下一步做什么？
+
+### 结论
+
+输出是正确的，说明资源基线已经生效：
+
+- LimitRange：默认请求 `50m/64Mi`，默认限制 `500m/256Mi`，单容器最大 `1 CPU/1Gi`。
+- ResourceQuota：Hard 为 `2 CPU / 2Gi` requests、`4 CPU / 4Gi` limits、`20` 个 Pod。
+- Quota 当前 Used：`2` 个 Pod、`100m/128Mi` requests、`400m/256Mi` limits。
+
+这个 Used 正好对应冒烟测试的两个 `web` Pod：
+
+```text
+每个 web：
+  requests: 50m CPU / 64Mi
+  limits:   200m CPU / 128Mi
+
+两个 web：
+  requests: 100m CPU / 128Mi
+  limits:   400m CPU / 256Mi
+  pods:     2
+```
+
+下一步分两件事：
+
+1. 创建一个不带 resources 的临时 Pod，确认 LimitRange 真的会注入默认值。
+2. 收集阶段 0–1 验收输出，填验收文档，然后打快照。
+
+### 13.1 验证 LimitRange 默认值注入
+
+```bash
+kubectl run quota-check -n demo --image=nginx:1.27-alpine --restart=Never
+```
+
+预期：
+
+```text
+pod/quota-check created
+```
+
+查看注入后的 resources：
+
+```bash
+kubectl get pod quota-check -n demo -o jsonpath='{.spec.containers[0].resources}'; echo
+```
+
+预期包含：
+
+```json
+{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}
+```
+
+再看一次配额：
+
+```bash
+kubectl describe quota -n demo
+```
+
+这时 `Used` 应该从 2 个 Pod 变成 3 个，数值大约变成：
+
+```text
+requests.cpu     150m
+requests.memory  192Mi
+limits.cpu       900m
+limits.memory    512Mi
+pods             3
+```
+
+删除临时 Pod：
+
+```bash
+kubectl delete pod quota-check -n demo
+```
+
+删除后 Quota 的 Used 会回到 2 个 Pod。
+
+如果临时 Pod 创建失败并报 `exceeded quota`，先看：
+
+```bash
+kubectl describe quota -n demo
+```
+
+按当前配置，`50m/64Mi` 的默认请求应该放得下；如果放不下，说明 `web` 的副本数或资源被改过。
+
+### 13.2 阶段 0–1 验收输出
+
+在 server 上执行：
+
+```bash
+kubectl version
+kubectl get nodes -o wide
+kubectl get pods -A -o wide
+kubectl get svc -A
+kubectl get pods -n demo -o wide
+curl -I http://172.25.254.10:30080
+kubectl describe limitrange -n demo
+kubectl describe quota -n demo
+free -h
+df -h
+systemctl status k3s --no-pager
+```
+
+在 `k8s-worker-1` 上执行：
+
+```bash
+free -h
+df -h
+systemctl status k3s-agent --no-pager
+```
+
+在 `k8s-worker-2` 上执行同样的命令：
+
+```bash
+free -h
+df -h
+systemctl status k3s-agent --no-pager
+```
+
+把这些输出贴回来，就可以把 `docs/02-lab/01-phase-0-1-acceptance.md` 里的 `<待填写>` 替换成真实结果。
+
+验收时重点看：
+
+- 三个节点都是 `Ready`，`INTERNAL-IP` 分别是 `.10`、`.11`、`.12`。
+- `kube-system` 的 Pod 都是 `Running`。
+- `demo` 的两个 `web` Pod 都在 worker 上，最好分别在不同 worker。
+- `curl -I` 返回 `HTTP/1.1 200 OK`。
+- LimitRange 和 Quota 数值与上面一致。
+- server 可用内存大于 1 GB，worker 大于 800 MB。
+
+### 13.3 打快照
+
+验收文档填完后，在 VMware 里给三台 VM 分别打快照：
+
+```text
+phase-1-k3s-ready
+```
+
+快照前先关机或暂停，避免磁盘状态不一致。
 
 ---
 
