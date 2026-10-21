@@ -14,7 +14,8 @@
 - 镜像加速已配置，worker-1、worker-2 已加入；用户报告三节点都是 `Ready`。
 - 冒烟测试已通过：Windows 主机可访问任意节点 IP:30080，能看到 nginx 欢迎页。
 - 资源基线已应用并验证：LimitRange 默认值 `50m/64Mi`、默认限制 `500m/256Mi`、单容器最大 `1/1Gi`；`demo-quota` 当前 Used 为 2 个 Pod、`100m/128Mi` requests、`400m/256Mi` limits。
-- 下一步：验证临时 Pod 的默认值注入，然后收集阶段 0–1 验收输出并打快照。
+- 阶段 0–1 验收输出已收集，写入 `docs/02-lab/01-phase-0-1-acceptance.md`。
+- 待完成：LimitRange 默认值注入验证、三台 VM 快照 `phase-1-k3s-ready`。
 
 ## 目录
 
@@ -31,6 +32,7 @@
 11. [三个资源 YAML 逐行解释](#11-三个资源-yaml-逐行解释)
 12. [资源清单解释完之后下一步做什么](#12-资源清单解释完之后下一步做什么)
 13. [LimitRange 和 Quota 输出确认后下一步](#13-limitrange-和-quota-输出确认后下一步)
+14. [阶段 0–1 验收输出确认](#14-阶段-0-1-验收输出确认)
 
 ---
 
@@ -2319,6 +2321,103 @@ phase-1-k3s-ready
 ```
 
 快照前先关机或暂停，避免磁盘状态不一致。
+
+---
+
+## 14. 阶段 0–1 验收输出确认
+
+### 问题
+
+已经收集了 `kubectl version`、节点、Pod、Service、curl、LimitRange、Quota、内存磁盘和 systemd 状态，下一步做什么？
+
+### 结论
+
+**整体通过。** 三节点 Ready，业务 Pod 分布在两个 worker，NodePort 返回 200，资源基线数值正确，内存和磁盘余量充足。
+
+阶段 0–1 还差两件事：
+
+1. 用临时 Pod 证明 LimitRange 默认值真的注入。
+2. 三台 VM 打快照 `phase-1-k3s-ready`。
+
+### 14.1 关键结果
+
+| 项 | 结果 |
+|---|---|
+| k3s 版本 | `v1.36.5+k3s1` |
+| 节点 | 3 个全部 `Ready`，IP 为 `.10/.11/.12` |
+| `demo/web` | 2 个 Pod 分别落在 worker-1 和 worker-2 |
+| `curl` | `HTTP/1.1 200 OK`，nginx/1.27.5 |
+| 系统 Pod | CoreDNS、local-path、metrics-server、Traefik、svclb 全部 `Running` |
+| LimitRange | 默认请求 `50m/64Mi`，默认限制 `500m/256Mi`，最大 `1/1Gi` |
+| Quota | `Used` 2 Pods、`100m/128Mi` requests、`400m/256Mi` limits |
+| server 可用内存 | 4.2 GiB |
+| worker 可用内存 | 各 2.0 GiB |
+| k3s / k3s-agent | 全部 `active (running)` |
+
+> `coredns`、`traefik`、`svclb-traefik` 等有 1–2 次重启，是之前修复 pause 镜像、重启 k3s 时产生的；当前都正常。
+
+### 14.2 与计划的偏差
+
+1. **系统版本**：计划是 Ubuntu 24.04，实际是 Ubuntu 22.04.5 LTS。k3s 正常运行，不影响阶段 1。
+2. **worker 内存**：计划每个 worker 2 GB，实际约 2.9 GiB（接近 3 GB）。余量更充足。
+3. **k3s 版本**：实际 `v1.36.5+k3s1`，是安装时的 stable 版本。
+4. **Traefik Service 的 EXTERNAL-IP**：显示三个节点 IP，这是 k3s servicelb 的正常行为。
+5. **kubelet 日志**：worker 在删除临时容器时出现过 `failed to read memory cgroup ...` 和 `ContainerStatus from runtime service failed` 的瞬时错误；节点仍 Ready，Pod 正常。阶段 2 继续观察。
+
+### 14.3 还差：LimitRange 默认值注入
+
+```bash
+kubectl run quota-check -n demo --image=nginx:1.27-alpine --restart=Never
+```
+
+```bash
+kubectl get pod quota-check -n demo -o jsonpath='{.spec.containers[0].resources}'; echo
+```
+
+预期包含：
+
+```json
+{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}
+```
+
+```bash
+kubectl describe quota -n demo
+```
+
+预期 `Used` 从 2 个 Pod 变成 3 个，requests 约 `150m/192Mi`，limits 约 `900m/512Mi`。
+
+```bash
+kubectl delete pod quota-check -n demo
+```
+
+删除后 `Used` 回到 2 个 Pod。
+
+### 14.4 还差：快照
+
+在 VMware 中给三台 VM 分别打快照：
+
+```text
+phase-1-k3s-ready
+```
+
+快照前先关机或暂停，避免磁盘状态不一致。
+
+### 14.5 验收文档
+
+真实输出已经写入：
+
+```text
+docs/02-lab/01-phase-0-1-acceptance.md
+```
+
+文档里已经记录环境、节点、系统 Pod、Service、冒烟测试、资源和配额、内存磁盘、systemd 状态，以及与计划的偏差。
+
+还剩两个复选框：
+
+- LimitRange 默认值注入
+- 三台 VM 快照
+
+完成这两个，阶段 0–1 就可以正式收尾，进入阶段 2 指标链路。
 
 ---
 
