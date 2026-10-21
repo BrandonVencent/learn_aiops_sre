@@ -27,6 +27,7 @@
 8. [冒烟测试和 smoke-test.yaml 是什么](#8-冒烟测试和-smoke-testyaml-是什么)
 9. [冒烟测试通过后做什么](#9-冒烟测试通过后做什么)
 10. [更正：server 当前使用 root](#10-更正server-当前使用-root)
+11. [三个资源 YAML 逐行解释](#11-三个资源-yaml-逐行解释)
 
 ---
 
@@ -1622,6 +1623,429 @@ whoami
 ```text
 root
 ```
+
+---
+
+## 11. 三个资源 YAML 逐行解释
+
+### 问题
+
+`00-namespaces.yaml`、`01-limitrange.yaml`、`02-resourcequota.yaml` 每个文件分别是什么意思？
+
+### 先看三个文件的关系
+
+| 文件 | 创建的对象 | 作用范围 | 解决的问题 |
+|---|---|---|---|
+| `00-namespaces.yaml` | 3 个 Namespace | 集群级 | 划出 `aiops`、`demo`、`monitoring` 三个隔离区 |
+| `01-limitrange.yaml` | 2 个 LimitRange | 单个命名空间 | 给容器注入默认 requests/limits，并限制单容器最大值 |
+| `02-resourcequota.yaml` | 1 个 ResourceQuota | 单个命名空间 | 限制 `demo` 里所有 Pod 加起来的总量 |
+
+推荐应用顺序：
+
+```text
+Namespace -> LimitRange -> ResourceQuota
+```
+
+不是 Kubernetes 强制要求这个顺序，而是逻辑上更安全：先有命名空间，再有默认资源，最后有总量限制。如果先建 Quota 且没有 LimitRange，创建不带 resources 的 Pod 会被 Quota 拒绝。
+
+---
+
+### 11.1 `00-namespaces.yaml`
+
+完整内容：
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aiops
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+```
+
+#### `apiVersion: v1`
+
+Namespace 属于 Kubernetes 核心 API 组，所以是 `v1`，不是 `apps/v1`。
+
+#### `kind: Namespace`
+
+声明这是一个命名空间对象。
+
+Namespace 是**集群级资源**，它本身不属于任何命名空间，所以没有 `metadata.namespace` 字段。
+
+#### `metadata.name`
+
+命名空间的名字。这里分别是：
+
+- `aiops`：后面放 AIOps 相关服务。
+- `demo`：放冒烟测试和演示服务。
+- `monitoring`：后面放 Prometheus、Grafana、Loki 等监控组件。
+
+命名空间名字必须符合 DNS label 规则：小写字母、数字、`-`，不能有大写、下划线，不能以 `-` 开头或结尾。
+
+#### `---`
+
+YAML 多文档分隔符。一个文件里可以写多个 Kubernetes 对象，`kubectl apply -f` 会依次处理。
+
+#### 为什么 `demo` 在冒烟测试里也创建过
+
+`smoke-test.yaml` 里也有一个 `Namespace demo`。重复不冲突，因为 `kubectl apply` 是幂等的：
+
+- 不存在：创建。
+- 已存在且内容一样：`unchanged`。
+- 已存在但内容不同：更新。
+
+这样每个清单都可以单独使用，不依赖别的文件先跑。
+
+#### 验证
+
+```bash
+kubectl get ns
+```
+
+预期看到 `aiops`、`demo`、`monitoring`，状态都是 `Active`。
+
+---
+
+### 11.2 `01-limitrange.yaml`
+
+文件里有两个几乎一样的 LimitRange，分别给 `aiops` 和 `demo`。这里拿 `demo` 那段解释：
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limits
+  namespace: demo
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 500m
+        memory: 256Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+```
+
+#### `apiVersion: v1` 和 `kind: LimitRange`
+
+LimitRange 也属于核心 API 组，所以是 `v1`。
+
+#### `metadata.name: default-limits`
+
+这个 LimitRange 的名字。`aiops` 和 `demo` 里都叫 `default-limits`，这是允许的，因为 LimitRange 是**命名空间级**资源，不同命名空间可以有同名对象。
+
+#### `metadata.namespace: demo`
+
+这条规则只作用于 `demo` 命名空间。`demo` 里的 LimitRange 不会影响 `aiops`、`monitoring` 或 `default`。
+
+#### `spec.limits`
+
+LimitRange 的规则列表。这里只有一条：
+
+```yaml
+- type: Container
+```
+
+`type: Container` 表示规则作用于**单个容器**。LimitRange 还支持 `type: Pod`，用来限制整个 Pod 的总量；这里不用。
+
+#### `defaultRequest`
+
+```yaml
+defaultRequest:
+  cpu: 50m
+  memory: 64Mi
+```
+
+如果容器**没有写 requests**，就自动注入：
+
+- CPU request：`50m`，也就是 0.05 核。
+- 内存 request：`64Mi`，也就是 64 MiB。
+
+requests 是调度依据：Scheduler 会找至少有这么多资源的节点。
+
+#### `default`
+
+```yaml
+default:
+  cpu: 500m
+  memory: 256Mi
+```
+
+如果容器**没有写 limits**，就自动注入：
+
+- CPU limit：`500m`，也就是 0.5 核。
+- 内存 limit：`256Mi`。
+
+limits 是运行上限：CPU 超了会被限流，内存超了可能被 OOMKilled。
+
+#### `max`
+
+```yaml
+max:
+  cpu: "1"
+  memory: 1Gi
+```
+
+单个容器的 request/limit 不能超过：
+
+- CPU：1 核。
+- 内存：1 GiB。
+
+比如你写 `cpu: 2` 或 `memory: 2Gi`，Pod 会被 API Server 拒绝。
+
+`cpu: "1"` 加引号是因为 Kubernetes 的 quantity 既可以是数字也可以是字符串；加引号更明确，避免 YAML 把它当纯数字。
+
+#### 默认值和显式值谁优先
+
+- 容器自己写了 requests/limits：用容器自己的值。
+- 容器没写：LimitRange 注入默认值。
+- 容器写了但超过 `max`：拒绝。
+
+LimitRange 只在**创建 Pod 时**生效，不会回头修改已经存在的 Pod。改大或改小 LimitRange，已有的 Pod 还是原来的资源，除非重建。
+
+#### 为什么 `aiops` 也有，`monitoring` 没有
+
+`aiops` 和 `demo` 是实验里会随手创建 Pod 的命名空间，给默认值可以避免“没写 resources 被配额拒绝”。
+
+`monitoring` 后面会放 Prometheus、Grafana、Loki，这些组件会有明确的 resources 配置，暂时不加默认值，避免默认限制和组件自身配置互相干扰。
+
+#### 验证
+
+```bash
+kubectl describe limitrange -n demo
+```
+
+预期看到：
+
+```text
+Default Request:
+  cpu:     50m
+  memory:  64Mi
+Default:
+  cpu:     500m
+  memory:  256Mi
+Max:
+  cpu:     1
+  memory:  1Gi
+```
+
+---
+
+### 11.3 `02-resourcequota.yaml`
+
+完整内容：
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: demo-quota
+  namespace: demo
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "20"
+```
+
+#### `kind: ResourceQuota`
+
+ResourceQuota 用来限制**一个命名空间内所有 Pod 的总量**，不是单个 Pod，也不是单个容器。
+
+#### `metadata.namespace: demo`
+
+这条配额只作用于 `demo`。`aiops` 和 `monitoring` 不受影响。
+
+#### `spec.hard`
+
+`hard` 是一个“上限表”，每一项都是命名空间内所有 Pod 的合计值。
+
+| 字段 | 含义 |
+|---|---|
+| `requests.cpu: "2"` | 所有 Pod 的 CPU requests 加起来不能超过 2 核 |
+| `requests.memory: 2Gi` | 所有 Pod 的内存 requests 加起来不能超过 2 GiB |
+| `limits.cpu: "4"` | 所有 Pod 的 CPU limits 加起来不能超过 4 核 |
+| `limits.memory: 4Gi` | 所有 Pod 的内存 limits 加起来不能超过 4 GiB |
+| `pods: "20"` | 命名空间里最多 20 个 Pod |
+
+注意：
+
+- `requests` 影响调度和配额；`limits` 影响运行上限和配额。
+- 配额统计的是**所有 Pod 的合计**，不是单个 Pod。
+- 已经存在的 Pod 会计入 `Used`，但配额不会因为超了去驱逐它们；它主要拦截新建 Pod。
+- 新建 Pod 时如果会超过任何一项，API Server 返回 `Forbidden`，Pod 创建失败。
+
+#### 为什么是 2 / 2Gi / 4 / 4Gi / 20
+
+这是根据实验环境定的：
+
+- 两个 worker 合计 4 vCPU、4 GiB 内存。
+- `requests` 设 2 核 / 2Gi，留出余量给系统 Pod 和突发。
+- `limits` 设 4 核 / 4Gi，允许一定程度的超卖和突发，但不会无限膨胀。
+- `pods: 20` 防止实验时不小心创建太多副本。
+
+这不是生产参数，是 16GB 宿主机上三台小 VM 的实验参数。
+
+#### 和 LimitRange 的区别
+
+| | LimitRange | ResourceQuota |
+|---|---|---|
+| 管什么 | 单个容器 | 整个命名空间 |
+| 典型作用 | 默认 requests/limits、单容器上限 | 总 requests/limits、Pod 数量 |
+| 超了会怎样 | 单个 Pod 被拒绝 | 新建 Pod 被拒绝 |
+| 是否修改已有 Pod | 不会 | 不会 |
+
+两者配合：
+
+1. LimitRange 给没写 resources 的容器补默认值。
+2. ResourceQuota 再检查这些值加起来有没有超总量。
+
+如果只有 ResourceQuota 没有 LimitRange，创建不带 resources 的 Pod 时，Quota 会因为“不知道 requests/limits 是多少”而拒绝。LimitRange 正好补上这个缺口。
+
+#### 用冒烟测试算一遍
+
+`web` 有 2 个副本，每个：
+
+```text
+requests: 50m CPU, 64Mi 内存
+limits:   200m CPU, 128Mi 内存
+```
+
+两个副本合计：
+
+```text
+requests: 100m CPU, 128Mi 内存
+limits:   400m CPU, 256Mi 内存
+pods:     2
+```
+
+再创建一个默认资源的 `quota-check` Pod：
+
+```text
+requests: 50m CPU, 64Mi 内存
+limits:   500m CPU, 256Mi 内存
+pods:     1
+```
+
+总计：
+
+```text
+requests: 150m CPU, 192Mi 内存
+limits:   900m CPU, 512Mi 内存
+pods:     3
+```
+
+都低于 `demo-quota` 的 2 核 / 2Gi / 4 核 / 4Gi / 20，所以能创建成功。
+
+如果继续创建两个 requests 各 1 核的 Pod：
+
+- 第一个之后：requests 约 1.15 核，还能放下。
+- 第二个之后：约 2.15 核，超过 2 核，第二个会被拒绝。
+
+这就是 Quota 的“总量拦截”。
+
+#### 验证
+
+```bash
+kubectl describe quota -n demo
+```
+
+预期看到 `Hard` 和 `Used`：
+
+```text
+Resource         Used   Hard
+--------         ----   ----
+limits.cpu       400m   4
+limits.memory    256Mi  4Gi
+pods             2      20
+requests.cpu     100m   2
+requests.memory  128Mi  2Gi
+```
+
+具体数值以实际输出为准；创建临时 Pod 后 `Used` 会增加。
+
+---
+
+### 11.4 三个文件怎么配合
+
+```text
+00-namespaces.yaml
+  └─ 划出 aiops / demo / monitoring 三个隔离区
+
+01-limitrange.yaml
+  └─ 在 aiops、demo 里规定：
+       没写 request -> 默认 50m / 64Mi
+       没写 limit   -> 默认 500m / 256Mi
+       单容器最大   -> 1 核 / 1Gi
+
+02-resourcequota.yaml
+  └─ 在 demo 里规定：
+       所有 Pod 的 requests 合计 <= 2 核 / 2Gi
+       所有 Pod 的 limits 合计   <= 4 核 / 4Gi
+       Pod 数量 <= 20
+```
+
+一次 Pod 创建要经过两道关：
+
+```text
+你提交 Pod
+  │
+  ├─ LimitRange 准入：
+  │    没写 resources？补默认值
+  │    超过单容器 max？拒绝
+  │
+  └─ ResourceQuota 准入：
+       加上这个 Pod 后超过 namespace 总量？拒绝
+       没超过？允许创建
+```
+
+---
+
+### 11.5 验证命令汇总
+
+```bash
+# 命名空间
+kubectl get ns
+
+# LimitRange 默认值和最大值
+kubectl describe limitrange -n demo
+kubectl describe limitrange -n aiops
+
+# ResourceQuota 的 Hard 和 Used
+kubectl describe quota -n demo
+
+# 创建一个不带 resources 的临时 Pod，验证默认值注入
+kubectl run quota-check -n demo --image=nginx:1.27-alpine --restart=Never
+
+# 看注入后的 resources
+kubectl get pod quota-check -n demo -o jsonpath='{.spec.containers[0].resources}'; echo
+
+# 删除临时 Pod
+kubectl delete pod quota-check -n demo
+```
+
+预期临时 Pod 的 resources 包含：
+
+```json
+{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}
+```
+
+字段顺序可能不同，数值对得上就说明 LimitRange 生效。
 
 ---
 
