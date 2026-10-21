@@ -96,6 +96,12 @@ swapon --show
 timedatectl
 ```
 
+如果从 Windows 复制脚本后在 Linux 上报 `$'\r': command not found`，先转换行尾：
+
+```bash
+sed -i 's/\r$//' 00-baseline.sh
+```
+
 ## 7. 快照
 
 系统基线验证通过后，在 VMware 里给三台虚拟机打快照，命名：

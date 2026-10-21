@@ -1,0 +1,10 @@
+* text=auto
+
+# Linux scripts and manifests must keep LF line endings.
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+# PowerShell scripts use Windows line endings.
+*.ps1 text eol=crlf
