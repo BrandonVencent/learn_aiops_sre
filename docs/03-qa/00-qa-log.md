@@ -16,6 +16,7 @@
 - 资源基线已应用并验证：LimitRange 默认值 `50m/64Mi`、默认限制 `500m/256Mi`、单容器最大 `1/1Gi`；`demo-quota` 当前 Used 为 2 个 Pod、`100m/128Mi` requests、`400m/256Mi` limits。
 - 阶段 0–1 验收输出已收集，写入 `docs/02-lab/01-phase-0-1-acceptance.md`。
 - 待完成：LimitRange 默认值注入验证、三台 VM 快照 `phase-1-k3s-ready`。
+- 阶段 2 计划已创建：`docs/superpowers/plans/2026-10-21-metrics-pipeline.md`。
 
 ## 目录
 
@@ -33,6 +34,7 @@
 12. [资源清单解释完之后下一步做什么](#12-资源清单解释完之后下一步做什么)
 13. [LimitRange 和 Quota 输出确认后下一步](#13-limitrange-和-quota-输出确认后下一步)
 14. [阶段 0–1 验收输出确认](#14-阶段-0-1-验收输出确认)
+15. [阶段 2：指标链路计划](#15-阶段-2指标链路计划)
 
 ---
 
@@ -2418,6 +2420,118 @@ docs/02-lab/01-phase-0-1-acceptance.md
 - 三台 VM 快照
 
 完成这两个，阶段 0–1 就可以正式收尾，进入阶段 2 指标链路。
+
+---
+
+## 15. 阶段 2：指标链路计划
+
+### 问题
+
+阶段 0–1 基本完成，下一阶段做什么？
+
+### 结论
+
+进入**阶段 2：指标链路**。
+
+目标是：在三节点 k3s 上部署 Prometheus、Grafana、node-exporter、kube-state-metrics，能够查询节点和 Pod 指标，并验证容器重启计数。
+
+完整计划已写入：
+
+```text
+docs/superpowers/plans/2026-10-21-metrics-pipeline.md
+```
+
+### 15.1 为什么选 kube-prometheus-stack
+
+阶段 2 用 `kube-prometheus-stack` Helm chart，而不是手动一个个装组件。
+
+它一次带来：
+
+- Prometheus Operator
+- Prometheus
+- Alertmanager
+- Grafana
+- kube-state-metrics
+- node-exporter
+- 默认的 Kubernetes / Node Exporter Dashboard
+- ServiceMonitor / PodMonitor / PrometheusRule CRD
+
+代价是组件多、资源占用比手装高。但 server 当前可用内存约 4.2 GiB，配合 values 里的 requests/limits，放得下。
+
+手动装 Prometheus + Grafana + KSM + node-exporter 更轻，但命令更多，且 Dashboard、RBAC、ServiceMonitor 都要自己配。第一版先用 chart 把链路跑通，后面再拆开看组件。
+
+### 15.2 关键决定
+
+| 项 | 决定 |
+|---|---|
+| 命名空间 | `monitoring` |
+| Grafana | NodePort `30030` |
+| Prometheus | NodePort `30090` |
+| Alertmanager | NodePort `30093` |
+| Prometheus 保留 | 7 天，最多 6 GB |
+| 抓取间隔 | 15 秒 |
+| 存储 | `local-path` PVC：Prometheus 10Gi、Alertmanager 1Gi、Grafana 1Gi |
+| k3s 控制面 target | 关闭 etcd/controller-manager/scheduler/kube-proxy，因为它们编在 k3s 进程里，没有独立 metrics 端点 |
+| 资源限制 | Prometheus 300Mi request / 1.2Gi limit；Grafana 128Mi/256Mi；Alertmanager 64Mi/128Mi |
+
+### 15.3 执行前的 gate
+
+阶段 2 会新增较多组件和 PVC。开始前先确认：
+
+1. 阶段 1 的 LimitRange 默认值注入已验证。
+2. 三台 VM 已有 `phase-1-k3s-ready` 快照。
+
+如果快照还没打，先做快照。阶段 2 出问题时可以回滚到干净的 k3s 底座。
+
+### 15.4 第一步
+
+计划里的 Task 1 是安装 Helm：
+
+```bash
+helm version
+```
+
+如果没有：
+
+```bash
+curl -fsSL -o /tmp/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+bash /tmp/get_helm.sh
+helm version
+```
+
+然后添加仓库：
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm search repo prometheus-community/kube-prometheus-stack --versions | head -10
+```
+
+记录实际 chart 版本，后面安装时固定使用。
+
+### 15.5 一个容易搞错的点
+
+阶段 2 验收里说“删 Pod 后能看到重启计数变化”，这句话要拆开理解：
+
+- **删除 Pod**：Deployment 会创建新 Pod，Pod 名字变了，新 Pod 的重启计数从 0 开始。
+- **重启容器**：让容器进程退出，kubelet 重启同一个容器，`kube_pod_container_status_restarts_total` 才会 +1。
+
+所以计划里用两种方式验证：
+
+1. `kubectl delete pod` 看新 Pod 出现。
+2. `kubectl exec <pod> -- kill 1` 看 RESTARTS 增加。
+
+这比只看“删 Pod”更准确。
+
+### 15.6 下一步
+
+请先看一遍计划，确认：
+
+- 用 `kube-prometheus-stack` 是否可以。
+- NodePort 30030/30090/30093 是否和现有环境冲突。
+- 是否接受 Prometheus 7 天 / 6GB 的保留策略。
+
+确认后从 Task 1 开始，先装 Helm，再写 values，再安装 chart。
 
 ---
 
