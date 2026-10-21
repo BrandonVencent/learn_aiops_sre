@@ -13,7 +13,7 @@
 - `k8s-server` 已安装 k3s server。
 - 镜像加速已配置，worker-1、worker-2 已加入；用户报告三节点都是 `Ready`。
 - 冒烟测试已通过：Windows 主机可访问任意节点 IP:30080，能看到 nginx 欢迎页。
-- 下一步：按第 9 节应用命名空间、LimitRange、ResourceQuota，然后收集阶段 0–1 验收输出并打快照。
+- 下一步：应用并验证命名空间、LimitRange、ResourceQuota（第 9 节），然后收集阶段 0–1 验收输出并打快照。
 
 ## 目录
 
@@ -28,6 +28,7 @@
 9. [冒烟测试通过后做什么](#9-冒烟测试通过后做什么)
 10. [更正：server 当前使用 root](#10-更正server-当前使用-root)
 11. [三个资源 YAML 逐行解释](#11-三个资源-yaml-逐行解释)
+12. [资源清单解释完之后下一步做什么](#12-资源清单解释完之后下一步做什么)
 
 ---
 
@@ -2046,6 +2047,131 @@ kubectl delete pod quota-check -n demo
 ```
 
 字段顺序可能不同，数值对得上就说明 LimitRange 生效。
+
+---
+
+## 12. 资源清单解释完之后下一步做什么
+
+### 问题
+
+三个 YAML 已经理解了，下一步做什么？
+
+### 结论
+
+**把三个清单真正 apply 上去，然后验证。**
+
+理解 YAML 只是知道它会创建什么；apply 之后集群里才会有 Namespace、LimitRange、ResourceQuota。如果你已经 apply 过，就直接跳到验证。
+
+### 第 1 步：确认文件在 server 上
+
+```bash
+ls -l /root/manifests/
+```
+
+预期看到：
+
+```text
+00-namespaces.yaml
+01-limitrange.yaml
+02-resourcequota.yaml
+```
+
+如果文件不在，先按上一条的 `scp` 命令从 Windows 复制。
+
+### 第 2 步：应用三个清单
+
+```bash
+kubectl apply -f /root/manifests/00-namespaces.yaml
+```
+
+预期：
+
+```text
+namespace/aiops created
+namespace/demo configured
+namespace/monitoring created
+```
+
+```bash
+kubectl apply -f /root/manifests/01-limitrange.yaml
+```
+
+预期：
+
+```text
+limitrange/default-limits created
+limitrange/default-limits created
+```
+
+```bash
+kubectl apply -f /root/manifests/02-resourcequota.yaml
+```
+
+预期：
+
+```text
+resourcequota/demo-quota created
+```
+
+### 第 3 步：验证资源对象
+
+```bash
+kubectl get ns
+```
+
+预期看到 `aiops`、`demo`、`monitoring`。
+
+```bash
+kubectl describe limitrange -n demo
+```
+
+预期看到默认请求 `50m/64Mi`、默认限制 `500m/256Mi`、单容器最大 `1/1Gi`。
+
+```bash
+kubectl describe quota -n demo
+```
+
+预期看到 `Hard`：
+
+```text
+requests.cpu     2
+requests.memory  2Gi
+limits.cpu       4
+limits.memory    4Gi
+pods             20
+```
+
+### 第 4 步：验证默认值真的注入
+
+```bash
+kubectl run quota-check -n demo --image=nginx:1.27-alpine --restart=Never
+```
+
+```bash
+kubectl get pod quota-check -n demo -o jsonpath='{.spec.containers[0].resources}'; echo
+```
+
+预期包含：
+
+```json
+{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}
+```
+
+删除临时 Pod：
+
+```bash
+kubectl delete pod quota-check -n demo
+```
+
+### 第 5 步：通过后
+
+下一步是阶段 0–1 验收：
+
+1. 收集 server 和两个 worker 的输出。
+2. 填 `docs/02-lab/01-phase-0-1-acceptance.md`。
+3. 三台 VM 打快照 `phase-1-k3s-ready`。
+
+验收命令见第 9.7 节。
 
 ---
 
