@@ -37,6 +37,7 @@
 14. [阶段 0–1 验收输出确认](#14-阶段-0-1-验收输出确认)
 15. [阶段 2：指标链路计划](#15-阶段-2指标链路计划)
 16. [worker 节点需要装 Helm 吗](#16-worker-节点需要装-helm-吗)
+17. [helm lint 为什么不支持 --version](#17-helm-lint-为什么不支持---version)
 
 ---
 
@@ -2586,6 +2587,81 @@ helm search repo prometheus-community/kube-prometheus-stack --versions | head -1
 ```
 
 把输出发出来，再选 chart 版本。
+
+---
+
+## 17. helm lint 为什么不支持 --version
+
+### 问题
+
+执行：
+
+```bash
+helm lint prometheus-community/kube-prometheus-stack \
+  --version 92.11.0 \
+  -f /root/monitoring/values-kube-prometheus-stack.yaml
+```
+
+报错：
+
+```text
+Error: unknown flag: --version
+```
+
+### 结论
+
+不是 values 文件的问题，是 `helm lint` 的用法不对。
+
+`helm lint` 的第一个参数需要是**本地 chart 目录或 chart 包**，它不会像 `helm install` 那样去仓库里解析 `--version`。`--version` 主要用于：
+
+- `helm install`
+- `helm template`
+- `helm pull`
+- `helm show`
+
+### 正确做法 A：先 pull，再 lint
+
+```bash
+# 把指定版本的 chart 下载并解压到 /tmp/kps-chart
+helm pull prometheus-community/kube-prometheus-stack \
+  --version 92.11.0 \
+  --untar \
+  --untardir /tmp/kps-chart
+
+# lint 本地 chart 目录
+helm lint /tmp/kps-chart/kube-prometheus-stack \
+  -f /root/monitoring/values-kube-prometheus-stack.yaml
+```
+
+预期：
+
+```text
+1 chart(s) linted, 0 chart(s) failed
+```
+
+### 正确做法 B：直接 template
+
+如果只是想确认 values 能渲染，可以跳过 `lint`，直接用 `helm template`：
+
+```bash
+helm template kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --version 92.11.0 \
+  -f /root/monitoring/values-kube-prometheus-stack.yaml \
+  > /tmp/kps-rendered.yaml
+
+wc -l /tmp/kps-rendered.yaml
+```
+
+预期：渲染成功，行数不为 0。
+
+### 验证 NodePort 是否生效
+
+```bash
+grep -nE 'nodePort: 300(30|90|93)|storage: (10Gi|1Gi)' /tmp/kps-rendered.yaml | head -20
+```
+
+预期能看到 `30030`、`30090`、`30093` 和 `10Gi`、`1Gi`。如果看不到，说明 values 里的字段名和当前 chart 不匹配，需要对照默认 values 调整。
 
 ---
 
