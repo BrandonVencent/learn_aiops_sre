@@ -15,8 +15,9 @@
 - 冒烟测试已通过：Windows 主机可访问任意节点 IP:30080，能看到 nginx 欢迎页。
 - 资源基线已应用并验证：LimitRange 默认值 `50m/64Mi`、默认限制 `500m/256Mi`、单容器最大 `1/1Gi`；`demo-quota` 当前 Used 为 2 个 Pod、`100m/128Mi` requests、`400m/256Mi` limits。
 - 阶段 0–1 验收输出已收集，写入 `docs/02-lab/01-phase-0-1-acceptance.md`。
-- 待完成：LimitRange 默认值注入验证、三台 VM 快照 `phase-1-k3s-ready`。
+- 待完成：三台 VM 快照 `phase-1-k3s-ready`。
 - 阶段 2 计划已创建：`docs/superpowers/plans/2026-10-21-metrics-pipeline.md`。
+- Helm `v3.22.1` 已安装在 `k8s-server`；worker 节点不需要安装 Helm。
 
 ## 目录
 
@@ -35,6 +36,7 @@
 13. [LimitRange 和 Quota 输出确认后下一步](#13-limitrange-和-quota-输出确认后下一步)
 14. [阶段 0–1 验收输出确认](#14-阶段-0-1-验收输出确认)
 15. [阶段 2：指标链路计划](#15-阶段-2指标链路计划)
+16. [worker 节点需要装 Helm 吗](#16-worker-节点需要装-helm-吗)
 
 ---
 
@@ -2532,6 +2534,58 @@ helm search repo prometheus-community/kube-prometheus-stack --versions | head -1
 - 是否接受 Prometheus 7 天 / 6GB 的保留策略。
 
 确认后从 Task 1 开始，先装 Helm，再写 values，再安装 chart。
+
+---
+
+## 16. worker 节点需要装 Helm 吗
+
+### 问题
+
+`k8s-worker-1`、`k8s-worker-2` 这些 agent 节点要不要也装 Helm？
+
+### 结论
+
+不需要。Helm 是客户端工具，只装在“你执行 `helm` 命令的那台机器”上。
+
+当前只在 `k8s-server` 上装就够了。
+
+### 原因
+
+- Helm 通过 kubeconfig 调用 Kubernetes API Server，不直接连接 worker。
+- worker 节点只运行 kubelet、containerd 和业务 Pod，不负责下发 Helm release。
+- `kubectl`、`helm` 都属于管理客户端；worker 不需要 kubeconfig，也不需要 Helm。
+- 如果你想在 Windows 上管理集群，也可以只在 Windows 装 Helm，再配置指向 server 的 kubeconfig；但当前直接在 server 上操作最简单。
+
+### 验证
+
+在 server 上：
+
+```bash
+helm version
+helm list -A
+```
+
+预期 `helm version` 输出 `v3.22.1`，`helm list -A` 能正常返回列表（当前还没有 release 时为空）。
+
+在 worker 上执行：
+
+```bash
+helm version
+```
+
+出现 `helm: command not found` 是正常的，不需要处理。
+
+### 下一步
+
+在 server 上添加 chart 仓库：
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm search repo prometheus-community/kube-prometheus-stack --versions | head -10
+```
+
+把输出发出来，再选 chart 版本。
 
 ---
 
