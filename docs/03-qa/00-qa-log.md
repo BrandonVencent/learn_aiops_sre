@@ -3029,6 +3029,13 @@ kubectl top pod -n monitoring -l app.kubernetes.io/name=grafana --containers
 - `kubectl top` 显示的 memory 低于 512Mi。
 - 再 `kubectl describe pod`，`Last State` 不再出现 `OOMKilled`。
 
+### 实际结果（初步）
+
+- `helm list`：`REVISION 2`，`STATUS deployed`。
+- 新 Pod `kube-prometheus-stack-grafana-896986bc4-8cc44`：`Restart Count 0`，limit `512Mi`，实际内存约 `380Mi`。
+- 事件里只有启动阶段一次 readiness 失败，之后没有 `OOMKilled`、`Back-off` 或 liveness 失败。
+- 说明旧 limit `256Mi` 确实不够；`512Mi` 目前有约 130Mi 余量。
+
 ### 注意
 
 如果 512Mi 还 OOM，再提高到 768Mi。一次只改一个参数，才能判断是否真的解决。
