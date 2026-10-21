@@ -1,6 +1,7 @@
 # Secrets and local state
 *.token
-*kubeconfig*
+kubeconfig
+kubeconfig.*
 .kube/
 .env
 
