@@ -678,7 +678,7 @@ Expected:
 
 如果渲染失败，先把完整错误贴出来；不要继续安装。
 
-- [ ] **Step 2: 安装 Loki**
+- [x] **Step 2: 安装 Loki**
 
 ```bash
 # --wait 会等 StatefulSet 的 Pod Ready；超时会返回非 0
@@ -693,7 +693,7 @@ helm upgrade --install loki grafana-community/loki \
 
 Expected: 输出 `STATUS: deployed`，并且 `loki-0` 变为 Ready。
 
-- [ ] **Step 3: 检查 Loki Pod、PVC 和 Service**
+- [x] **Step 3: 检查 Loki Pod、PVC 和 Service**
 
 ```bash
 kubectl get pods -n logging -o wide
