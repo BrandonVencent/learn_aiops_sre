@@ -1365,7 +1365,7 @@ LogQL 查询结果
 > 状态：已完成，验收记录见 [阶段 3 日志链路验收记录](03-phase-3-acceptance.md)。
 ```
 
-- [ ] **Step 4: 提交并推送**
+- [x] **Step 4: 提交并推送**
 
 ```bash
 git add infra/logging docs/02-lab/03-phase-3-acceptance.md docs/03-qa/2026-10-22.md docs/03-qa/00-qa-log.md docs/README.md docs/02-lab/00-lab-design.md
@@ -1375,7 +1375,7 @@ git push
 
 Expected: 提交成功；`git status -sb` 显示分支与 `origin` 同步。
 
-实际：本地提交已完成，commit `7514cba`。`git push` 仍被本机代理阻塞，待代理恢复后补推。
+实际：本地提交已完成，最新提交 `1bf6197`。代理端口 `127.0.0.1:7897` 未监听，改用直连成功推送，远端从 `10f3b14` 更新到 `1bf6197`。
 
 - [x] **Step 5: 打阶段 3 快照**
 
@@ -1435,6 +1435,6 @@ kubectl delete namespace logging
 - 能查询 `{namespace="demo"}`。
 - 能用 `| json | line_format "{{.log}}" | json | level="error"` 过滤。
 - 能查到一条完整的多行 Python traceback。
-- 文档、Q&A、验收记录已本地提交；`git push` 待代理恢复。
+- 文档、Q&A、验收记录已提交并推送到远端。
 - Grafana 里旧手工 `loki` 数据源已删除。
 - 三台 VM 有 `phase-3-logging-ready` 快照，开机后组件正常。
