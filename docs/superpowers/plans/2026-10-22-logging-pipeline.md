@@ -854,7 +854,7 @@ Expected:
 - `403` / `forbidden`：Kubernetes filter 的 RBAC 不足；检查 ClusterRole 和 ServiceAccount。
 - `connection refused` 到 Loki：Loki Service 名称/端口不对，或 Loki 未 Ready。
 
-- [ ] **Step 5: 确认 Loki 收到了 Fluent Bit 的日志**
+- [x] **Step 5: 确认 Loki 收到了 Fluent Bit 的日志**
 
 保持 Task 2 的 port-forward（如果没有，重新执行）：
 
@@ -878,14 +878,14 @@ namespace
 pod
 ```
 
-然后查询最近 10 分钟的日志：
+然后查询最近 10 分钟的日志。demo 还没部署时，先查 `logging` 命名空间：
 
 ```bash
 START=$(date -d '10 minutes ago' +%s)000000000
 END=$(date +%s)000000000
 
 curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
-  --data-urlencode 'query={namespace="demo"}' \
+  --data-urlencode 'query={namespace="logging"}' \
   --data-urlencode "start=$START" \
   --data-urlencode "end=$END" \
   --data-urlencode 'limit=5' \
@@ -894,17 +894,25 @@ curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
 
 Expected:
 - `status` 是 `success`。
-- `data.result` 不是空数组；能看到 demo web 的 nginx 日志，或者 Fluent Bit 自己的日志。
+- `data.result` 不是空数组；能看到 Loki 或 Fluent Bit 自己的日志。
 - 每条结果的 `stream` 里有 `namespace`、`pod`、`container` 标签。
+
+本次实际结果：`status=success`，`data.result` 非空，stream 为 `container=loki`、`job=fluent-bit`、`namespace=logging`、`pod=loki-0`，并额外出现 `service_name=loki` 和 `detected_level=info`。日志行是 `{"_p":"F","log":"..."}` 的外层 JSON；做 `level` 过滤时要注意先取出 `log` 字段，具体在 Task 6 验证。
 
 如果结果为空：
 
 ```bash
-# 先确认 Fluent Bit 有没有读到文件
-kubectl exec -n logging daemonset/fluent-bit -- ls -l /var/log/containers | head
+# Fluent Bit 是精简镜像，没有 ls；先看挂载声明
+POD=$(kubectl get pods -n logging \
+  -l app.kubernetes.io/name=fluent-bit \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl describe pod -n logging "$POD" | grep -A12 'Mounts:'
 
 # 再看 Fluent Bit 日志
-kubectl logs -n logging daemonset/fluent-bit --tail=100
+kubectl logs -n logging \
+  -l app.kubernetes.io/name=fluent-bit \
+  --tail=100 \
+  --prefix=true
 ```
 
 常见错误：
