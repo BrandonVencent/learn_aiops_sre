@@ -651,6 +651,7 @@ daemonSetVolumeMounts:
 - `multiline.parser cri, python`：
   - `cri` 先解析 containerd 的日志头：时间、stream、tag。
   - `python` 再尝试把 `Traceback` 和后续缩进行合成一个日志条目。
+  - 这两个都是 Fluent Bit 内置的多行解析器，不需要在 `parsers.conf` 里自己定义。
   - 顺序很重要；只写 `python` 可能解析不了 CRI 头。
 - `Tag kube.*`：给记录打内部标签，后面的 filter/output 用 `Match kube.*` 匹配。
 - `Mem_Buf_Limit 5MB`：每个输入的内存缓冲上限，防止日志洪水吃光内存。

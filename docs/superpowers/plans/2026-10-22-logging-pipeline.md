@@ -769,7 +769,7 @@ Expected:
 - Consumes: Task 2 的 Loki Service `loki:3100`。
 - Produces: 三个节点上的 Fluent Bit Pod，持续把 `/var/log/containers` 推到 Loki，并生成 `namespace`、`pod`、`container` 标签。
 
-- [ ] **Step 1: 先渲染 Fluent Bit 模板**
+- [x] **Step 1: 先渲染 Fluent Bit 模板**
 
 ```bash
 helm template fluent-bit fluent/fluent-bit \
