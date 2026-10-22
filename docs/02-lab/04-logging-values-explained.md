@@ -467,6 +467,50 @@ bloomGateway:
 
 这两个不是同一个东西。
 
+### 2.18 `helm template` 实际渲染出的对象
+
+渲染后应看到 3 个 Service，各自用途不同：
+
+| Service | 类型 | 端口 | 用途 |
+|---|---|---|---|
+| `loki` | ClusterIP | 3100 | Fluent Bit 写入、Grafana 查询的稳定入口 |
+| `loki-headless` | Headless（`clusterIP: None`） | 3100/9095 | StatefulSet 的稳定 Pod DNS，`serviceName` 指向它 |
+| `loki-memberlist` | Headless（`clusterIP: None`） | 7946 | Loki 内部 memberlist ring 通信 |
+
+`loki-memberlist` 不是 memcached 残留，也不是多余对象。Loki 配置里的 `join_members` 会使用它来做集群成员发现；单副本时它仍然存在，属于 chart 的正常结构。
+
+StatefulSet 的关键结果：
+
+```text
+name: loki
+replicas: 1
+serviceName: loki-headless
+image: docker.io/grafana/loki:3.7.9
+nodeSelector: kubernetes.io/hostname=k8s-worker-2
+volumeClaimTemplates: storage 5Gi, local-path
+```
+
+为什么 `serviceName` 是 `loki-headless`，不是 `loki`：
+
+- `loki-headless` 给 StatefulSet Pod 提供稳定网络标识。
+- `loki` 是给客户端用的普通 ClusterIP Service。
+- 两者不冲突，也不是配置错误。
+
+chart 默认还会在 Loki Pod 里加一个 `kiwigrid/k8s-sidecar` 容器，用来监听带 `loki_rule` 标签的 ConfigMap/Secret，加载 ruler 规则。
+
+我们不做告警规则，而且这个 sidecar 默认没有 `requests/limits`，所以显式关闭：
+
+```yaml
+singleBinary:
+  sidecar: false
+
+sidecar:
+  rules:
+    enabled: false
+```
+
+关闭后，Loki Pod 里只保留真正需要的 Loki 容器，资源边界更清楚。
+
 ---
 
 ## 3. `values-fluent-bit.yaml` 逐段解释

@@ -216,6 +216,8 @@ deploymentMode: Monolithic
 singleBinary:
   enabled: true
   replicas: 1
+  # 不使用 ruler/rule ConfigMap，关闭 rules sidecar，避免额外容器
+  sidecar: false
 
   # 放在 worker-2，避免和 server 上的 Prometheus/Grafana 抢内存
   nodeSelector:
@@ -283,6 +285,10 @@ memcached:
   enabled: false
 memcachedExporter:
   enabled: false
+# 不使用 ruler 规则，关闭 rules sidecar；该 sidecar 默认没有 requests/limits
+sidecar:
+  rules:
+    enabled: false
 test:
   enabled: false
 
@@ -652,16 +658,23 @@ grep -n -A35 '^kind: StatefulSet' /tmp/loki-rendered.yaml | head -60
 grep -n 'image:' /tmp/loki-rendered.yaml | head
 grep -n -A6 'nodeSelector:' /tmp/loki-rendered.yaml
 grep -n -A12 'volumeClaimTemplates:' /tmp/loki-rendered.yaml
+
+# 5. 确认 rules sidecar 已关闭
+grep -n 'k8s-sidecar' /tmp/loki-rendered.yaml || echo "OK: 没有 rules sidecar"
 ```
 
 Expected:
 - 渲染成功，没有模板错误。
-- 只有 2 个 Service：`loki`（ClusterIP，端口 `3100`）和 `loki-headless`。
-- 只有 1 个 StatefulSet：`loki`，`replicas: 1`。
+- 3 个 Service，均为正常对象：
+  - `loki`：ClusterIP，端口 `3100`，给 Fluent Bit 和 Grafana 使用。
+  - `loki-headless`：StatefulSet 的 headless Service。
+  - `loki-memberlist`：headless，端口 `7946`，Loki 内部 memberlist ring 使用。
+- 只有 1 个 StatefulSet：`loki`，`replicas: 1`，`serviceName: loki-headless`。
 - 镜像为 `docker.io/grafana/loki:3.7.9`。
 - `nodeSelector` 为 `kubernetes.io/hostname: k8s-worker-2`。
 - `volumeClaimTemplates` 中 `storage: 5Gi`、`storageClassName: local-path`。
 - 不应再有 `loki-memcached` 的 ServiceAccount 或 Service；如果还有，检查 `memcached.enabled` 和 `memcachedExporter.enabled` 是否都为 `false`。
+- 不应再有 `kiwigrid/k8s-sidecar`；如果还有，检查 `singleBinary.sidecar` 和 `sidecar.rules.enabled` 是否都为 `false`。
 
 如果渲染失败，先把完整错误贴出来；不要继续安装。
 

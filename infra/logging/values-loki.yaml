@@ -5,6 +5,8 @@ deploymentMode: Monolithic
 singleBinary:
   enabled: true
   replicas: 1
+  # 不使用 ruler/rule ConfigMap，关闭 rules sidecar，避免额外容器
+  sidecar: false
 
   # 放在 worker-2，避免和 server 上的 Prometheus/Grafana 抢内存
   nodeSelector:
@@ -72,6 +74,10 @@ memcached:
   enabled: false
 memcachedExporter:
   enabled: false
+# 不使用 ruler 规则，关闭 rules sidecar；该 sidecar 默认没有 requests/limits
+sidecar:
+  rules:
+    enabled: false
 test:
   enabled: false
 
