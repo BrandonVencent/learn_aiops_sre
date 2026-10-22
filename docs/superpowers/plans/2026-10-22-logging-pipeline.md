@@ -636,7 +636,7 @@ Expected: 提交成功，工作区没有未提交的 `infra/logging` 文件。
 - Consumes: Task 1 的 Helm 仓库和 Loki values。
 - Produces: `logging` 命名空间中的 Loki StatefulSet、Service `loki:3100`、PVC，以及 `/ready` 可用的 Loki 实例。
 
-- [ ] **Step 1: 先渲染模板，不直接安装**
+- [x] **Step 1: 先渲染模板，不直接安装**
 
 ```bash
 # 检查模板能否正常生成；重点看 Service 名称、镜像、PVC 和 Monolithic 模式
