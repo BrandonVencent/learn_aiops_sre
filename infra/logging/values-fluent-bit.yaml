@@ -8,6 +8,10 @@ image:
   tag: "5.1.3"
   pullPolicy: IfNotPresent
 
+# chart 默认会渲染 Helm test Pod（busybox）；本阶段不执行 helm test，关闭
+testFramework:
+  enabled: false
+
 resources:
   requests:
     cpu: 50m

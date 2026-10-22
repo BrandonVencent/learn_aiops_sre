@@ -342,6 +342,10 @@ image:
   tag: "5.1.3"
   pullPolicy: IfNotPresent
 
+# chart 默认会渲染 Helm test Pod（busybox）；本阶段不执行 helm test，关闭
+testFramework:
+  enabled: false
+
 resources:
   requests:
     cpu: 50m
@@ -773,17 +777,28 @@ helm template fluent-bit fluent/fluent-bit \
   --version 0.58.3 \
   -f /root/logging/values-fluent-bit.yaml > /tmp/fluent-bit-rendered.yaml
 
+# 看资源类型
+grep -n '^kind:' /tmp/fluent-bit-rendered.yaml
+
 # 看 DaemonSet 和 ConfigMap
-grep -n 'kind: DaemonSet' /tmp/fluent-bit-rendered.yaml
-grep -n 'kind: ConfigMap' /tmp/fluent-bit-rendered.yaml
+grep -n -A18 '^kind: DaemonSet' /tmp/fluent-bit-rendered.yaml | head -50
+grep -n -A30 '^kind: ConfigMap' /tmp/fluent-bit-rendered.yaml | head -100
 
 # 确认镜像不是 cr.fluentbit.io
 grep -n 'image:' /tmp/fluent-bit-rendered.yaml | head
+
+# 看 HTTP metrics/health Service
+grep -n -A20 '^kind: Service' /tmp/fluent-bit-rendered.yaml
+
+# 确认 Helm test Pod 已关闭
+grep -n '^kind: Pod' /tmp/fluent-bit-rendered.yaml || echo "OK: 没有 test Pod"
 ```
 
 Expected:
 - 渲染成功。
-- DaemonSet 和 ConfigMap 都存在。
+- 有 DaemonSet、ConfigMap、ServiceAccount、ClusterRole、ClusterRoleBinding。
+- 有 1 个 Service `fluent-bit`，ClusterIP，端口 `2020`，用于 HTTP metrics/health；它不是日志入口。
+- 没有 `kind: Pod`，因为 `testFramework.enabled: false`。
 - 镜像类似 `fluent/fluent-bit:5.1.3`，不是 `cr.fluentbit.io/...`。
 
 - [ ] **Step 2: 安装 Fluent Bit**

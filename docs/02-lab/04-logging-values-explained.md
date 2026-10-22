@@ -732,7 +732,62 @@ Kubernetes filter 会调用 Kubernetes API，给日志补元数据：
 {namespace="demo", pod=~"log-demo-.*"} | json | level="error"
 ```
 
-### 3.9 日志进入 Loki 后的样子
+### 3.9 chart 额外渲染的 Service 和 test Pod
+
+Fluent Bit chart 默认还会渲染两类对象，容易被误认为配置错误。
+
+#### Service `fluent-bit`
+
+```text
+kind: Service
+name: fluent-bit
+type: ClusterIP
+port: 2020
+```
+
+这个 Service 不是日志入口，而是 Fluent Bit 的 HTTP 服务入口。
+
+ConfigMap 的 `[SERVICE]` 段里有：
+
+```ini
+HTTP_Server On
+HTTP_Listen 0.0.0.0
+HTTP_Port 2020
+Health_Check On
+```
+
+所以 Service `fluent-bit:2020` 用来访问：
+
+- `/api/v2/metrics/prometheus`：Fluent Bit 自身指标。
+- 健康检查相关端点。
+
+Fluent Bit 采集到的日志是**主动推送到 Loki**，不会经过这个 Service。它和 Loki 的 `loki:3100` 是两回事。
+
+保留这个 Service 不影响日志链路；以后接 Prometheus 监控 Fluent Bit 时还能用。
+
+#### Helm test Pod
+
+chart 默认：
+
+```yaml
+testFramework:
+  enabled: true
+```
+
+会渲染一个 `busybox:latest` 的 test Pod，用于 `helm test` 的连接测试。
+
+它默认带 Helm test hook，不会参与正常日志采集。但它会让 `helm template` 的结果多出一个 `kind: Pod`，容易误判。
+
+本阶段不执行 `helm test`，所以在 values 里关闭：
+
+```yaml
+testFramework:
+  enabled: false
+```
+
+关闭后，渲染结果里不应再出现 `kind: Pod`。
+
+### 3.10 日志进入 Loki 后的样子
 
 应用输出：
 
