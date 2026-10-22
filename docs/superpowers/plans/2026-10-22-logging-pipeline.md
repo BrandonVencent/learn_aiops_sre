@@ -1076,7 +1076,8 @@ PY
 Expected:
 - `/` 返回 200。
 - `/error` 返回 500 或抛出 HTTPError，但 Pod 不会退出。
-- `kubectl logs -n demo deploy/log-demo --tail=30` 能看到一行 JSON error 和一段 `Traceback (most recent call last):`。
+- `kubectl logs -n demo deploy/log-demo --since=5m --timestamps=true` 能看到一行 JSON error 和一段 `Traceback (most recent call last):`。
+- 这里必须用 `kubectl exec -i`。漏掉 `-i` 时 heredoc 不会送进容器，`python -` 读到空输入后直接退出，看起来命令成功但 `/error` 根本没执行。readinessProbe 每 5 秒产生的 info 还可能把 `--tail=200` 填满，所以用 `--since` 比只看 tail 更可靠。
 
 - [ ] **Step 3: 确认日志进入 Loki**
 
