@@ -741,7 +741,7 @@ Expected:
 - `connection refused`：port-forward 终端是否还在运行；Service 端口是否真的是 3100。
 - `/ready` 一直不是 `ready`：看 `kubectl logs -n logging loki-0`，通常是启动还没完成或配置错误。
 
-- [ ] **Step 5: 记录实际 chart 和镜像版本**
+- [x] **Step 5: 记录实际 chart 和镜像版本**
 
 ```bash
 helm list -n logging
