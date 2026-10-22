@@ -837,7 +837,7 @@ kubectl describe pod -n logging -l app.kubernetes.io/name=fluent-bit
 - 如果 server 有 `NoSchedule` taint，values 里的 toleration 应该已经生效。
 - 如果 Pod 是 `Pending`，看节点资源、taint 和 hostPath。
 
-- [ ] **Step 4: 检查 Fluent Bit 自身日志**
+- [x] **Step 4: 检查 Fluent Bit 自身日志**
 
 ```bash
 kubectl logs -n logging daemonset/fluent-bit --tail=80
