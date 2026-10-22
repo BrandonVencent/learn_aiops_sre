@@ -86,7 +86,7 @@ kubectl describe pod -n demo web-554647c847-8qq4w
 
 先看 readiness 事件，不要带着未解释的异常进入阶段 3。
 
-- [ ] **Step 2: 确认阶段 1 快照是否存在**
+- [x] **Step 2: 确认阶段 1 快照是否存在**
 
 在 VMware 的 Snapshot Manager 里检查三台 VM 是否有：
 
@@ -95,6 +95,8 @@ phase-1-k3s-ready
 ```
 
 如果缺失，在 `docs/02-lab/01-phase-0-1-acceptance.md` 里记录缺失；**不要**把当前阶段 2 状态命名为 `phase-1-k3s-ready`。
+
+实际：2026-10-22 用户确认三台 VM 都有 `phase-1-k3s-ready` 快照。
 
 - [ ] **Step 3: 打阶段 2 快照**
 

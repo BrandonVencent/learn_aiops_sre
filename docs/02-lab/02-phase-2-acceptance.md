@@ -31,7 +31,7 @@
 - [x] Grafana 能显示 3 个节点和 2 个 demo Pod
 - [x] 容器重启计数实验通过：同一个 Pod 重启计数加 1；删除 Pod 后新 Pod 从 0 开始
 - [x] Grafana OOMKilled 已修复，新 Pod 持续 `RESTARTS 0`
-- [ ] 三台 VM 快照 `phase-1-k3s-ready`
+- [x] 三台 VM 快照 `phase-1-k3s-ready`
 - [ ] 三台 VM 快照 `phase-2-metrics-ready`
 
 ## 1. Helm release
@@ -486,7 +486,7 @@ web-554647c847-8qq4w  -> 0
 阶段 2 的指标验收已完成，收尾还需要：
 
 ```text
-[ ] 确认三台 VM 有 phase-1-k3s-ready 快照
+[x] 确认三台 VM 有 phase-1-k3s-ready 快照（2026-10-22 确认）
 [ ] 三台 VM 打 phase-2-metrics-ready 快照
 ```
 

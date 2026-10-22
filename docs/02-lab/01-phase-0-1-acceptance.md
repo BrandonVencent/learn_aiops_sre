@@ -1,6 +1,6 @@
 # 阶段 0–1 验收记录
 
-> 状态：集群底座、冒烟测试、资源基线和 LimitRange 默认值注入已通过；待补充三台 VM 快照。
+> 状态：集群底座、冒烟测试、资源基线和 LimitRange 默认值注入已通过；三台 VM 的 `phase-1-k3s-ready` 快照已确认。
 
 ## 环境
 
@@ -25,7 +25,7 @@
 - [x] `curl http://172.25.254.10:30080` 返回 `200`
 - [x] `demo` 的 LimitRange 默认值注入已验证
 - [x] `demo` 的 ResourceQuota 生效
-- [ ] 三台虚拟机都有快照 `phase-1-k3s-ready`
+- [x] 三台虚拟机都有快照 `phase-1-k3s-ready`（2026-10-22 确认）
 
 ## 结果
 
@@ -167,7 +167,7 @@ LimitRange 的默认值已通过临时 Pod 验证：创建 `quota-check` 时没�
 ## 待完成
 
 - [x] 运行临时 Pod，记录 LimitRange 默认值注入结果。
-- [ ] 三台 VM 打快照 `phase-1-k3s-ready`。
+- [x] 三台 VM 打快照 `phase-1-k3s-ready`（2026-10-22 确认）。
 
 ### LimitRange 默认值注入验证命令
 
