@@ -714,7 +714,7 @@ Expected:
 - `loki-0` CrashLoopBackOff：看 `kubectl logs -n logging loki-0 --previous`，常见原因是 schema/storage/compactor 配置错误。
 - Service 名称不是 `loki`：先不要改 Fluent Bit；把实际名称记下来，Task 3 再调整 `Host`。
 
-- [ ] **Step 4: 验证 Loki 就绪和 metrics**
+- [x] **Step 4: 验证 Loki 就绪和 metrics**
 
 在 server 上开一个终端做 port-forward：
 
