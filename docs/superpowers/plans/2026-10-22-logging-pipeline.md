@@ -603,7 +603,7 @@ helm lint /tmp/helm-charts/fluent-bit -f /root/logging/values-fluent-bit.yaml
 Expected: 两个 chart 都输出 `1 chart(s) linted, 0 chart(s) failed`。  
 如果有 schema 错误，先修 values，不要进入安装。
 
-- [ ] **Step 8: 提交配置文件和计划**
+- [x] **Step 8: 提交配置文件和计划**
 
 ```bash
 git add infra/logging docs/02-lab/04-logging-values-explained.md \
