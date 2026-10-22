@@ -933,7 +933,7 @@ kubectl logs -n logging \
 - Consumes: Task 2 的 `loki:3100`、Task 1 的 ConfigMap。
 - Produces: Grafana 中可用的 `Loki` 数据源，Explore 能查询日志。
 
-- [ ] **Step 1: 确认 Grafana 有 datasource sidecar**
+- [x] **Step 1: 确认 Grafana 有 datasource sidecar**
 
 ```bash
 kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana \
@@ -960,7 +960,7 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
 
 升级前先确认 `/root/monitoring/values-kube-prometheus-stack.yaml` 还在；如果不在，先不要升级，改用 Grafana UI 手工添加数据源，并把情况记录到验收文档。
 
-- [ ] **Step 2: 应用 Loki 数据源 ConfigMap**
+- [x] **Step 2: 应用 Loki 数据源 ConfigMap**
 
 ```bash
 kubectl apply -f /root/logging/grafana-loki-datasource.yaml
@@ -969,7 +969,7 @@ kubectl get configmap -n monitoring loki-datasource -o yaml
 
 Expected: ConfigMap 创建成功，`data.loki-datasource.yaml` 内容正确，label 有 `grafana_datasource: "1"`。
 
-- [ ] **Step 3: 看 sidecar 是否加载**
+- [x] **Step 3: 看 sidecar 是否加载**
 
 ```bash
 kubectl logs -n monitoring deploy/kube-prometheus-stack-grafana \
@@ -980,7 +980,10 @@ Expected: 看到类似：
 
 ```text
 config from configmap 'loki-datasource' added
+Writing /etc/grafana/provisioning/datasources/loki-datasource.yaml
 ```
+
+本次实际结果：文件写入成功，但 sidecar 调用 reload API 时返回 `401 Unauthorized`。原因是 Grafana admin 密码被手动改过，sidecar 仍在使用旧密码。文件本身已经写入，重启 Grafana 后会在启动时加载。
 
 如果看不到：
 
@@ -988,7 +991,7 @@ config from configmap 'loki-datasource' added
 - 确认 label 是 `grafana_datasource: "1"`。
 - 确认 sidecar 的 `searchNamespace` 不是 `own`；如果是，需要把 ConfigMap 放到 Grafana 所在命名空间或调整 sidecar。
 
-- [ ] **Step 4: 在 Grafana 中验证数据源**
+- [x] **Step 4: 在 Grafana 中验证数据源**
 
 浏览器打开：
 
@@ -1004,15 +1007,17 @@ Connections → Data sources → Loki
 
 点击 `Save & test`，Expected: 显示数据源连接成功。
 
-然后进入 `Explore`，选择 `Loki`，执行：
+本次实际结果：Grafana 里同时存在旧的手工数据源 `loki`（UID `dg1zqi7tex9fke`）和 provisioning 的 `Loki`（UID `loki`）。旧数据源一开始 URL 是 `http://localhost:3100`，健康检查 `connection refused`；改成 `http://loki.logging.svc.cluster.local:3100` 后，两个健康检查都返回 `status=ok`。保留 provisioning 的 `Loki`，建议删除旧的手工 `loki`，避免以后选错。
+
+然后进入 `Explore`，选择 `Loki`，demo 还没部署时先执行：
 
 ```logql
-{namespace="demo"}
+{namespace="logging"}
 ```
 
-Expected: 能看到 demo 命名空间的日志。
+Expected: 能看到 Loki/Fluent Bit 日志。demo 部署后再查 `{namespace="demo"}`。
 
-- [ ] **Step 5: 记录 Grafana 数据源配置**
+- [x] **Step 5: 记录 Grafana 数据源配置**
 
 不要在仓库记录 Grafana 密码。验收文档只记录：
 
