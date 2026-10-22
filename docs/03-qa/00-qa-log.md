@@ -10,7 +10,7 @@
 | 日期 | 内容 | 文件 |
 |---|---|---|
 | 2026-10-21 | 阶段 0–2：k3s 基线、冒烟测试、LimitRange/Quota、kube-prometheus-stack、Grafana OOM | [2026-10-21.md](2026-10-21.md) |
-| 2026-10-22 | 阶段 3：日志链路计划、Task 1 预检、`helm lint` 用法修正、Loki 渲染与 memcached/sidecar 清理 | [2026-10-22.md](2026-10-22.md) |
+| 2026-10-22 | 阶段 3：Loki + Fluent Bit + Grafana 日志链路、level 查询、Python traceback 多行合并、资源检查 | [2026-10-22.md](2026-10-22.md) |
 
 ## 记录模板
 

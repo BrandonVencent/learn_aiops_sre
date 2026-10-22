@@ -10,6 +10,8 @@
 > 1. 这个文件是什么类型，谁读取它？
 > 2. 每个字段在做什么，不写或写错会怎样？
 > 3. 它和日志从产生到查询的哪一段有关？
+>
+> 实际验收结果见：[阶段 3 日志链路验收记录](03-phase-3-acceptance.md)。
 
 ## 0. 先分清两类文件
 
@@ -637,7 +639,8 @@ daemonSetVolumeMounts:
 [INPUT]
     Name tail
     Path /var/log/containers/*.log
-    multiline.parser cri, python
+    # Tail 只处理 CRI 运行时拆行；Python 堆栈由下面的 multiline filter 处理
+    multiline.parser cri
     Tag kube.*
     Mem_Buf_Limit 5MB
     Skip_Long_Lines On
@@ -648,11 +651,10 @@ daemonSetVolumeMounts:
 
 - `Name tail`：跟踪文件尾部，类似 `tail -F`。
 - `Path`：读取所有容器的 CRI 日志文件。
-- `multiline.parser cri, python`：
-  - `cri` 先解析 containerd 的日志头：时间、stream、tag。
-  - `python` 再尝试把 `Traceback` 和后续缩进行合成一个日志条目。
-  - 这两个都是 Fluent Bit 内置的多行解析器，不需要在 `parsers.conf` 里自己定义。
-  - 顺序很重要；只写 `python` 可能解析不了 CRI 头。
+- `multiline.parser cri`：
+  - `cri` 解析 containerd 的日志头：时间、stream、tag，并处理容器运行时把一行日志拆成多段的情况。
+  - 这里不再写 `python`：Tail 层的 `cri, python` 没有把应用自己的 Python traceback 合并成功；应用堆栈交给下面的 `multiline` filter。
+  - `cri` 是 Fluent Bit 内置的多行解析器，不需要在 `parsers.conf` 里自己定义。
 - `Tag kube.*`：给记录打内部标签，后面的 filter/output 用 `Match kube.*` 匹配。
 - `Mem_Buf_Limit 5MB`：每个输入的内存缓冲上限，防止日志洪水吃光内存。
 - `Skip_Long_Lines On`：遇到超长行不阻塞整个采集；可能截断/跳过超长内容。
@@ -662,6 +664,12 @@ daemonSetVolumeMounts:
 
 ```ini
 [FILTER]
+    Name multiline
+    Match kube.*
+    multiline.key_content log
+    multiline.parser python
+
+[FILTER]
     Name kubernetes
     Match kube.*
     Merge_Log Off
@@ -669,6 +677,19 @@ daemonSetVolumeMounts:
     K8S-Logging.Parser On
     K8S-Logging.Exclude On
 ```
+
+#### multiline filter
+
+- `Name multiline`：把应用产生的多行日志合并成一条记录。
+- `Match kube.*`：只处理 tail 输入产生的记录。
+- `multiline.key_content log`：CRI 解析后，应用内容在 `log` 字段里，规则要匹配这个字段。
+- `multiline.parser python`：使用 Fluent Bit 内置的 Python 多行解析器，识别 `Traceback (most recent call last):` 和后续缩进行。
+- 这里没有开 `Buffer On`：官方文档说明 Tail 输入是例外，filter 可以按 chunk 处理；先保持最小配置。只有当日志确实跨 chunk 到达、仍然合并不完整时，才加 `Buffer On`。
+- 顺序：`multiline` 必须是第一个 filter。它会把合并后的记录重新送回 pipeline 头部；如果前面还有 filter，那些 filter 会被重复执行。
+- 只对同一个 tag 配置一个 multiline filter。配置多个会形成无限循环。
+- 如果以后开启 `Buffer On`，会增加一点内存和延迟；默认 `emitter_mem_buf_limit` 是 10MB，当前学习环境足够。
+
+#### Kubernetes filter
 
 Kubernetes filter 会调用 Kubernetes API，给日志补元数据：
 
@@ -692,6 +713,7 @@ Kubernetes filter 会调用 Kubernetes API，给日志补元数据：
 - 我们的应用输出 JSON，希望 Loki 里保存原始 JSON 行。
 - LogQL 用 `| json` 在查询时解析，不需要 Fluent Bit 提前拆字段。
 - 如果 `Merge_Log On`，字段会被合并到记录顶层，`log` 可能不再完整，后续 `Drop_Single_Key raw` 的行为也会变。
+- 当前保留 `Merge_Log Off` 的副作用是：日志行外面还有 `{"_p":"F","log":"..."}`，所以 `level` 查询需要先取出 `log`，再做第二次 `| json`。
 
 ### 3.8 `config.outputs`
 
@@ -727,11 +749,17 @@ Kubernetes filter 会调用 Kubernetes API，给日志补元数据：
 
 - 每个 level 组合都会产生新的 stream。
 - 如果以后把 `trace_id` 也做标签，每个请求一个 stream，Loki 会被高基数拖垮。
-- level 是日志内容的一部分，查询时用：
+- level 是日志内容的一部分，当前查询时用：
 
 ```logql
-{namespace="demo", pod=~"log-demo-.*"} | json | level="error"
+{namespace="demo", pod=~"log-demo-.*"}
+  | json
+  | line_format "{{.log}}"
+  | json
+  | level="error"
 ```
+
+如果以后把 `Merge_Log On` 并移除 `_p`，才可以简化为 `| json | level="error"`。
 
 ### 3.9 chart 额外渲染的 Service 和 test Pod
 

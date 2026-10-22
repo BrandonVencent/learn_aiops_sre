@@ -48,13 +48,22 @@ config:
     [INPUT]
         Name tail
         Path /var/log/containers/*.log
-        multiline.parser cri, python
+        # Tail 只处理 CRI 运行时拆行；Python 堆栈由下面的 multiline filter 处理
+        multiline.parser cri
         Tag kube.*
         Mem_Buf_Limit 5MB
         Skip_Long_Lines On
         Refresh_Interval 5
 
   filters: |
+    # 必须放在 kubernetes filter 之前：
+    # filter 会把合并后的记录重新送回 pipeline 头部，靠前的 filter 不会重复执行。
+    [FILTER]
+        Name multiline
+        Match kube.*
+        multiline.key_content log
+        multiline.parser python
+
     [FILTER]
         Name kubernetes
         Match kube.*

@@ -1150,15 +1150,37 @@ Expected:
 - 只返回 error JSON 行。
 - 不应把 `level` 做成 Loki label；这里是用 `| json` 在查询时解析。
 
-再查 info：
+实际结果：这条简单查询返回空。原因是 Fluent Bit 当前 `Merge_Log Off`，Loki 里每行是：
+
+```json
+{"_p":"F","log":"{\"level\":\"error\",...}"}
+```
+
+第一次 `| json` 只解析出 `_p` 和 `log`，没有顶层 `level`。使用下面的嵌套解析作为当前验收查询：
 
 ```logql
-{namespace="demo", pod=~"log-demo-.*"} | json | level="info"
+{namespace="demo", pod=~"log-demo-.*"}
+  | json
+  | line_format "{{.log}}"
+  | json
+  | level="error"
+```
+
+已验证：该查询能返回 error JSON 行。后续如要支持简单写法，可单独把 `Merge_Log` 改为 `On` 并移除 `_p`，不要和本次 multiline 修复混在一起。
+
+再查 info（使用同样的嵌套写法）：
+
+```logql
+{namespace="demo", pod=~"log-demo-.*"}
+  | json
+  | line_format "{{.log}}"
+  | json
+  | level="info"
 ```
 
 Expected: 只返回 hello 日志。
 
-- [ ] **Step 3: 查询完整多行堆栈**
+- [x] **Step 3: 查询完整多行堆栈**
 
 ```logql
 {namespace="demo", pod=~"log-demo-.*"} |= "Traceback"
@@ -1168,42 +1190,79 @@ Expected:
 - 至少返回一条包含 `Traceback (most recent call last):` 的日志。
 - 如果 Fluent Bit 的 Python 多行解析生效，这一条日志的 `line` 字段里应包含后续的 `File ...`、`RuntimeError: ...` 多行内容。
 
-如果 traceback 被拆成多条：
+实际结果：traceback 被拆成多条。`|= "Traceback"` 只返回：
 
-```bash
-# 先确认 Fluent Bit 读到的是多行还是单行
-kubectl logs -n demo deploy/log-demo --tail=40
-
-# 看 Fluent Bit 配置是否真的用了 cri,python
-kubectl describe configmap -n logging fluent-bit
+```json
+{"_p":"F","log":"Traceback (most recent call last):"}
 ```
 
-然后按顺序尝试：
+后续 `File ...`、`raise ...`、`RuntimeError: ...` 是独立记录。
 
-1. 确认 `config.inputs` 里是 `multiline.parser cri, python`，不是 `cri`。
-2. 把 `python` 放在 `cri` 后面；不要只写 `python`，否则 CRI 头可能解析不了。
-3. 如果仍然拆开，在 `config.filters` 里增加 `multiline` filter：
+已确认的根因：
 
-```text
+- Tail 输入里的 `multiline.parser cri, python` 没有把应用自己的 Python traceback 合并。
+- `cri` 负责 CRI 运行时拆行；应用堆栈需要单独的 `multiline` filter。
+- 官方文档也把“应用堆栈/多行日志”指向 multiline filter，而不是只靠 Tail 的 `cri, python`。
+
+最终采用的最小修复：
+
+```ini
+# config.inputs：只保留 CRI
+multiline.parser cri
+
+# config.filters：必须放在 kubernetes filter 之前
 [FILTER]
     Name multiline
     Match kube.*
     multiline.key_content log
     multiline.parser python
+
+[FILTER]
+    Name kubernetes
+    Match kube.*
+    Merge_Log Off
 ```
 
-改完 values 后执行：
+改完 values 后，先渲染检查，再升级：
 
 ```bash
-helm upgrade fluent-bit fluent/fluent-bit \
+helm lint /tmp/helm-charts/fluent-bit \
+  -f /root/logging/values-fluent-bit.yaml
+
+helm template fluent-bit /tmp/helm-charts/fluent-bit \
+  --namespace logging \
+  -f /root/logging/values-fluent-bit.yaml \
+  > /tmp/fluent-bit-rendered.yaml
+
+grep -n -A10 'Name multiline' /tmp/fluent-bit-rendered.yaml
+grep -n -A10 'Name kubernetes' /tmp/fluent-bit-rendered.yaml
+
+helm upgrade --install fluent-bit fluent/fluent-bit \
   --namespace logging \
   --version 0.58.3 \
-  -f /root/logging/values-fluent-bit.yaml
+  -f /root/logging/values-fluent-bit.yaml \
+  --wait --timeout 5m
 ```
 
-Expected: 等 10-20 秒后重新查询，traceback 变成一个条目。把最终有效的配置写进验收文档。
+Expected:
+- 渲染配置里 `multiline` filter 在 `kubernetes` filter 之前。
+- 三个 Fluent Bit Pod 重新滚动并 `Running`。
+- 等 10–20 秒后，`{namespace="demo"} |= "Traceback"` 返回一个条目，`line` 中包含 `Traceback`、`File ...`、`RuntimeError` 多行内容。
 
-- [ ] **Step 4: 查询其他命名空间，确认不是只采集 demo**
+如果仍然拆开，并且确认 traceback 行跨 chunk 到达，再单独加 `Buffer On` 重试；不要同时改其他配置。
+
+实际验证：升级后重新触发 `/error`，查询 `{namespace="demo"} |= "Traceback"` 只返回 1 个 values 条目，`line` 中包含：
+
+```text
+Traceback (most recent call last):
+  File "/app/app.py", line 39, in do_GET
+    raise RuntimeError("demo error for Loki")
+RuntimeError: demo error for Loki
+```
+
+多行合并成功。`_p` 仍保留，属于本次未改 `Remove_Keys` 的预期结果。
+
+- [x] **Step 4: 查询其他命名空间，确认不是只采集 demo**
 
 ```logql
 {namespace="monitoring"}
@@ -1211,14 +1270,16 @@ Expected: 等 10-20 秒后重新查询，traceback 变成一个条目。把最�
 
 Expected: 能看到 Grafana/Prometheus 等 Pod 的日志，说明 DaemonSet 和 Kubernetes filter 在全局工作。
 
-- [ ] **Step 5: 记录验收结果**
+实际结果：`{namespace="monitoring"}` 返回 `grafana-sc-dashboard`、`grafana-sc-datasources` 等 sidecar 容器的日志，`data.result` 非空。
+
+- [x] **Step 5: 记录验收结果**
 
 至少记录：
 
 ```text
 查询 1：{namespace="demo", pod=~"log-demo-.*"} -> 有结果
-查询 2：... | json | level="error" -> 有结果
-查询 3：... |= "Traceback" -> 1 条多行日志 / 或拆成 N 条（如实记录）
+查询 2：... | json | line_format "{{.log}}" | json | level="error" -> 有结果
+查询 3：... |= "Traceback" -> 1 条多行日志（修复后）
 查询 4：{namespace="monitoring"} -> 有结果
 Loki labels：container, job, namespace, pod
 ```
@@ -1234,7 +1295,19 @@ kubectl top nodes
 Expected: Loki 和 Fluent Bit 没有接近 limit；worker-2 还有可用内存。  
 如果 Loki 内存接近 `1Gi`，先缩短保留期或降低日志量，不要直接加 limit 把节点压满。
 
-如果多行没有合并，不要写成“通过”；记录实际状态和后续修正。
+实际资源：
+
+```text
+fluent-bit-8wv7c  3m  5Mi
+fluent-bit-lshbz  4m  5Mi
+fluent-bit-zc7th  4m  5Mi
+loki-0            9m  87Mi
+k8s-server        118m (2%)  3552Mi (60%)
+k8s-worker-1       21m (0%)  1336Mi (45%)
+k8s-worker-2       29m (0%)  1366Mi (46%)
+```
+
+多行已验证合并成 1 条；验收结果写入 `docs/02-lab/03-phase-3-acceptance.md`。
 
 ---
 
@@ -1251,7 +1324,7 @@ Expected: Loki 和 Fluent Bit 没有接近 limit；worker-2 还有可用内存�
 - Consumes: Task 1–6 的实际输出。
 - Produces: 阶段 3 验收记录、可复现命令、Q&A、可回滚快照。
 
-- [ ] **Step 1: 写阶段 3 验收记录**
+- [x] **Step 1: 写阶段 3 验收记录**
 
 创建 `docs/02-lab/03-phase-3-acceptance.md`，至少包含：
 
@@ -1269,7 +1342,7 @@ LogQL 查询结果
 
 命令和输出要来自实际执行，不要复制计划里的预期值。
 
-- [ ] **Step 2: 更新 Q&A**
+- [x] **Step 2: 更新 Q&A**
 
 在 `docs/03-qa/2026-10-22.md` 增加阶段 3 当天的问答，至少覆盖：
 
@@ -1281,7 +1354,7 @@ LogQL 查询结果
 - Grafana datasource sidecar 的标签和命名空间。
 - 镜像 `cr.fluentbit.io` 与 Docker Hub mirror 的区别。
 
-- [ ] **Step 3: 更新索引和实验设计**
+- [x] **Step 3: 更新索引和实验设计**
 
 在 `docs/README.md` 的阅读顺序增加阶段 3 验收记录。  
 在 `docs/02-lab/00-lab-design.md` 的阶段 3 标题下增加：
@@ -1354,7 +1427,8 @@ kubectl delete namespace logging
 - Loki labels 至少有 `namespace`、`pod`、`container`、`job`。
 - Grafana 中 Loki 数据源可用。
 - 能查询 `{namespace="demo"}`。
-- 能用 `| json | level="error"` 过滤。
-- 能查到一条完整的多行 Python traceback，或如实记录未合并及原因。
+- 能用 `| json | line_format "{{.log}}" | json | level="error"` 过滤。
+- 能查到一条完整的多行 Python traceback。
 - 文档、Q&A、验收记录已提交并推送。
+- Grafana 里旧手工 `loki` 数据源已删除。
 - 三台 VM 有 `phase-3-logging-ready` 快照。
