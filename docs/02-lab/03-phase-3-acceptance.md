@@ -1,6 +1,6 @@
 # 阶段 3 日志链路验收记录
 
-> 状态：Fluent Bit → Loki → Grafana 主链路已通过；旧手工 Loki 数据源待清理；待三台 VM 快照 `phase-3-logging-ready`。
+> 状态：验收通过；旧手工 Loki 数据源已删除；三台 VM 已创建 `phase-3-logging-ready` 快照。
 
 ## 环境
 
@@ -37,8 +37,9 @@
 - [x] 嵌套 LogQL 能按 `level="error"` 和 `level="info"` 过滤
 - [x] Python traceback 合并成一条多行日志
 - [x] Grafana provisioning 数据源 `Loki` 健康检查通过
-- [ ] 删除 Grafana 里旧的手工 `loki` 数据源
-- [ ] 三台 VM 创建 `phase-3-logging-ready` 快照
+- [x] 删除 Grafana 里旧的手工 `loki` 数据源，只保留 `Loki`
+- [x] 三台 VM 创建 `phase-3-logging-ready` 快照
+- [x] 快照恢复后三节点 `Ready`，Loki 和 Fluent Bit Pod 全部 `Running`
 
 ## 1. Helm release
 
@@ -337,7 +338,34 @@ kubectl top nodes
 - worker-2 仍有充足内存。
 - 当前日志量适合 7 天保留期。
 
-## 8. 已知偏差与未完成项
+## 8. 快照后验证
+
+Grafana 数据源清理完成：旧手工 `loki`（UID `dg1zqi7tex9fke`）已删除，只保留 provisioning 的 `Loki`（UID `loki`）。
+
+三台 VM 干净关机后，在 VMware 中分别创建名为 `phase-3-logging-ready` 的快照。开机后确认：
+
+```text
+NAME           STATUS   ROLES           AGE   VERSION
+k8s-server     Ready    control-plane   28h   v1.36.5+k3s1
+k8s-worker-1   Ready    <none>          28h   v1.36.5+k3s1
+k8s-worker-2   Ready    <none>          28h   v1.36.5+k3s1
+```
+
+```text
+NAME               READY   STATUS    RESTARTS   AGE
+fluent-bit-8wv7c   1/1     Running   0          13m
+fluent-bit-lshbz   1/1     Running   0          13m
+fluent-bit-zc7th   1/1     Running   0          13m
+loki-0             1/1     Running   0          171m
+```
+
+说明：
+
+- 快照恢复后三个节点重新加入集群。
+- Loki 和三个 Fluent Bit Pod 自动恢复，没有手工重建。
+- 后续如果阶段 4 配置失败，可以回滚到 `phase-2-metrics-ready` 或本次 `phase-3-logging-ready`。
+
+## 9. 已知偏差与未完成项
 
 ### 偏差
 
@@ -347,13 +375,17 @@ kubectl top nodes
 4. `detected_level` 对部分 info 日志显示 `unknown`，因为 Loki 不会自动解析 `log` 里的嵌套 JSON；验收以查询时解析出的 `level` 为准。
 5. 本阶段没有部署 Tempo/OTel，日志中的 `trace_id` 还没有和 trace 关联。
 
-### 未完成
+### 已完成收尾
 
-- [ ] 删除 Grafana 旧的手工 `loki` 数据源（UID `dg1zqi7tex9fke`），只保留 provisioning 的 `Loki`（UID `loki`）。
-- [ ] 三台 VM 创建 `phase-3-logging-ready` 快照。
+- [x] 删除 Grafana 旧的手工 `loki` 数据源（UID `dg1zqi7tex9fke`），只保留 provisioning 的 `Loki`（UID `loki`）。
+- [x] 三台 VM 创建 `phase-3-logging-ready` 快照。
+
+### 历史遗留与仓库事项
+
 - [ ] 阶段 1 的 `phase-1-k3s-ready` 历史快照仍未确认；不要用阶段 3 快照代替它。
+- [ ] 本地提交 `7514cba` 尚未推送；本机代理恢复后执行 `git push`。
 
-## 9. 复现命令汇总
+## 10. 复现命令汇总
 
 ```bash
 # Helm release
@@ -399,7 +431,7 @@ curl -sG http://127.0.0.1:3100/loki/api/v1/query_range \
   | python3 -m json.tool
 ```
 
-## 10. 结论
+## 11. 结论
 
 阶段 3 的日志链路已经打通：
 
@@ -418,10 +450,12 @@ Grafana / LogQL
 - JSON 日志可以按 `level` 过滤。
 - Python traceback 可以合并成一条多行日志。
 - Loki 数据源在 Grafana 中健康。
+- 旧手工数据源已删除。
 - 资源占用适合当前 16 GB 宿主机实验环境。
+- 三台 VM 已有 `phase-3-logging-ready` 快照，快照恢复后组件正常。
 
 下一步可以做：
 
-1. 删除旧手工数据源，完成 Grafana 清理。
-2. 创建 `phase-3-logging-ready` 快照。
+1. 代理恢复后执行 `git push`，把本地提交 `7514cba` 推到远端。
+2. 如有需要，补确认阶段 1 的历史快照 `phase-1-k3s-ready`。
 3. 进入阶段 4（如果内存允许）：Tempo + OTel，把 `trace_id` 和 trace 关联起来。

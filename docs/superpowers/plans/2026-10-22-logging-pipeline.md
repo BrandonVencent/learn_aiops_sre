@@ -1373,7 +1373,9 @@ git push
 
 Expected: 提交成功；`git status -sb` 显示分支与 `origin` 同步。
 
-- [ ] **Step 5: 打阶段 3 快照**
+实际：本地提交已完成，commit `7514cba`。`git push` 仍被本机代理阻塞，待代理恢复后补推。
+
+- [x] **Step 5: 打阶段 3 快照**
 
 三台 VM 干净关机后，在 VMware 中打：
 
@@ -1395,6 +1397,8 @@ Expected:
 - 三节点 `Ready`。
 - Loki `loki-0`、Fluent Bit 三个 Pod、Grafana/Prometheus 等全部正常。
 - `logging` 中两个 Helm release 都是 `deployed`。
+
+实际：三台 VM 已创建 `phase-3-logging-ready` 快照。开机后三节点 `Ready`；`logging` 中三个 Fluent Bit Pod 和 `loki-0` 全部 `1/1 Running`。旧手工 Grafana `loki` 数据源也已删除。
 
 ---
 
@@ -1429,6 +1433,6 @@ kubectl delete namespace logging
 - 能查询 `{namespace="demo"}`。
 - 能用 `| json | line_format "{{.log}}" | json | level="error"` 过滤。
 - 能查到一条完整的多行 Python traceback。
-- 文档、Q&A、验收记录已提交并推送。
+- 文档、Q&A、验收记录已本地提交；`git push` 待代理恢复。
 - Grafana 里旧手工 `loki` 数据源已删除。
-- 三台 VM 有 `phase-3-logging-ready` 快照。
+- 三台 VM 有 `phase-3-logging-ready` 快照，开机后组件正常。

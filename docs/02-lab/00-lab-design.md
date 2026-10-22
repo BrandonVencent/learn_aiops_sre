@@ -131,7 +131,7 @@ k3s 不是「玩具」，它的 API、调度器、kubelet、CNI、RBAC 与标准
 
 ### 阶段 3：日志链路
 
-> 状态：主链路已完成，验收记录见 [阶段 3 日志链路验收记录](03-phase-3-acceptance.md)。
+> 状态：已完成，验收记录见 [阶段 3 日志链路验收记录](03-phase-3-acceptance.md)；三台 VM 已有 `phase-3-logging-ready` 快照。
 
 - 部署 Loki 单机模式，文件系统存储。
 - 部署 Fluent Bit DaemonSet，采集 `/var/log/containers`。
