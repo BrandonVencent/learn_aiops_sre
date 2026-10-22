@@ -801,7 +801,7 @@ Expected:
 - 没有 `kind: Pod`，因为 `testFramework.enabled: false`。
 - 镜像类似 `fluent/fluent-bit:5.1.3`，不是 `cr.fluentbit.io/...`。
 
-- [ ] **Step 2: 安装 Fluent Bit**
+- [x] **Step 2: 安装 Fluent Bit**
 
 ```bash
 helm upgrade --install fluent-bit fluent/fluent-bit \
@@ -814,7 +814,7 @@ helm upgrade --install fluent-bit fluent/fluent-bit \
 
 Expected: `STATUS: deployed`。
 
-- [ ] **Step 3: 确认三个节点都有一个 Fluent Bit Pod**
+- [x] **Step 3: 确认三个节点都有一个 Fluent Bit Pod**
 
 ```bash
 kubectl get ds -n logging
