@@ -22,6 +22,7 @@
 - Grafana 数据源用 ConfigMap + sidecar 自动加载，不在仓库里记录 Grafana 密码。
 - 所有长期运行的组件必须设置 `requests` 和 `limits`。
 - 不在仓库里记录 token、密码或私钥。
+- 每个新增/修改的 YAML 或 Helm values，必须先用中文解释对象类型、字段作用、数据流、不写或写错的后果、常见错误，再执行；阶段 3 的专题解释在 `docs/02-lab/04-logging-values-explained.md`。
 - 阶段 3 只做日志链路，不安装 Tempo/OTel，不做链路追踪。
 
 ## Review Focus
@@ -42,6 +43,7 @@
 - Create: `infra/logging/values-fluent-bit.yaml` —— Fluent Bit Helm values，DaemonSet、CRI/Python 多行、Loki 输出。
 - Create: `infra/logging/grafana-loki-datasource.yaml` —— Grafana Loki 数据源 ConfigMap。
 - Create: `infra/logging/demo-service.yaml` —— 产生 JSON 日志和多行 Python traceback 的 demo 服务。
+- Create: `docs/02-lab/04-logging-values-explained.md` —— 四个 YAML/values 的逐段解释。
 - Create after acceptance: `docs/02-lab/03-phase-3-acceptance.md` —— 阶段 3 验收记录。
 - Modify: `docs/03-qa/2026-10-22.md` —— 记录当天 Loki/Fluent Bit 的实际问题。
 - Modify: `docs/03-qa/00-qa-log.md` —— 如有新的每日记录，更新索引。
@@ -568,7 +570,7 @@ spec:
 - `trace_id` 只放在 JSON 内容里，不做 Loki label。
 - demo 命名空间有 ResourceQuota，当前请求 50m/64Mi，不会超限。
 
-- [ ] **Step 7: 复制文件到 server**
+- [x] **Step 7: 复制文件到 server**
 
 在 Windows PowerShell 执行：
 
@@ -604,8 +606,10 @@ Expected: 两个 chart 都输出 `1 chart(s) linted, 0 chart(s) failed`。
 - [ ] **Step 8: 提交配置文件和计划**
 
 ```bash
-git add infra/logging docs/superpowers/plans/2026-10-22-logging-pipeline.md
-git commit -m "feat: add logging pipeline values and plan"
+git add infra/logging docs/02-lab/04-logging-values-explained.md \
+  docs/03-qa/00-qa-log.md docs/03-qa/2026-10-22.md \
+  docs/README.md docs/superpowers/plans/2026-10-22-logging-pipeline.md
+git commit -m "feat: add phase 3 logging values and yaml explanations"
 ```
 
 Expected: 提交成功，工作区没有未提交的 `infra/logging` 文件。

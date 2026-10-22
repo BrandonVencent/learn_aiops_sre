@@ -1,0 +1,72 @@
+# Fluent Bit DaemonSet：每个节点采集 /var/log/containers/*.log
+kind: DaemonSet
+
+# 默认 chart 用 cr.fluentbit.io；k3s 的 mirror 只覆盖 docker.io/registry.k8s.io，
+# 所以改用 Docker Hub，走现有 registry mirror。
+image:
+  repository: fluent/fluent-bit
+  tag: "5.1.3"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# server 节点如果有 control-plane taint，也能运行 Fluent Bit
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+# k3s 使用 containerd，不需要 /var/lib/docker/containers
+daemonSetVolumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: etcmachineid
+    hostPath:
+      path: /etc/machine-id
+      type: File
+
+daemonSetVolumeMounts:
+  - name: varlog
+    mountPath: /var/log
+  - name: etcmachineid
+    mountPath: /etc/machine-id
+    readOnly: true
+
+config:
+  inputs: |
+    [INPUT]
+        Name tail
+        Path /var/log/containers/*.log
+        multiline.parser cri, python
+        Tag kube.*
+        Mem_Buf_Limit 5MB
+        Skip_Long_Lines On
+        Refresh_Interval 5
+
+  filters: |
+    [FILTER]
+        Name kubernetes
+        Match kube.*
+        Merge_Log Off
+        Keep_Log On
+        K8S-Logging.Parser On
+        K8S-Logging.Exclude On
+
+  outputs: |
+    [OUTPUT]
+        Name loki
+        Match kube.*
+        Host loki.logging.svc.cluster.local
+        Port 3100
+        Labels job=fluent-bit, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name'], container=$kubernetes['container_name']
+        Line_Format json
+        Remove_Keys kubernetes,stream,time
+        Drop_Single_Key raw
+        Retry_Limit False
