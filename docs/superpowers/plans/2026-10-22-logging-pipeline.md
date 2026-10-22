@@ -43,7 +43,8 @@
 - Create: `infra/logging/grafana-loki-datasource.yaml` —— Grafana Loki 数据源 ConfigMap。
 - Create: `infra/logging/demo-service.yaml` —— 产生 JSON 日志和多行 Python traceback 的 demo 服务。
 - Create after acceptance: `docs/02-lab/03-phase-3-acceptance.md` —— 阶段 3 验收记录。
-- Modify: `docs/03-qa/00-qa-log.md` —— 记录 Loki/Fluent Bit 的实际问题。
+- Modify: `docs/03-qa/2026-10-22.md` —— 记录当天 Loki/Fluent Bit 的实际问题。
+- Modify: `docs/03-qa/00-qa-log.md` —— 如有新的每日记录，更新索引。
 - Modify: `docs/README.md` —— 增加阶段 3 验收文档入口。
 - Modify: `docs/02-lab/00-lab-design.md` —— 标记阶段 3 完成。
 
@@ -133,7 +134,7 @@ Expected: 节点和 Pod 恢复到关机前状态；Loki 还没有安装，`loggi
 - Consumes: 阶段 2 的健康集群、`local-path` StorageClass、Helm。
 - Produces: 四个可重复使用的配置文件，以及已添加的 Loki/Fluent Bit chart 仓库。
 
-- [ ] **Step 1: 检查节点、taint、存储和内存**
+- [x] **Step 1: 检查节点、taint、存储和内存**
 
 在 `k8s-server` 上执行：
 
@@ -160,7 +161,7 @@ Expected:
 
 如果磁盘不足，先把 Loki PVC 改成 3Gi，或换到空间更大的 worker；不要先装再处理 Pending。
 
-- [ ] **Step 2: 检查 Helm 仓库和端口占用**
+- [x] **Step 2: 检查 Helm 仓库和端口占用**
 
 ```bash
 # 查看已有仓库；Loki 新仓库在 grafana-community，不是旧的 grafana
@@ -201,7 +202,7 @@ helm pull oci://ghcr.io/grafana-community/helm-charts/loki --version 19.0.3 --un
 helm pull oci://ghcr.io/fluent/helm-charts/fluent-bit --version 0.58.3 --untar -d /tmp
 ```
 
-- [ ] **Step 3: 创建 Loki values**
+- [x] **Step 3: 创建 Loki values**
 
 创建 `infra/logging/values-loki.yaml`：
 
@@ -313,7 +314,7 @@ bloomGateway:
 - `singleBinary.replicas: 1` 是实际运行的 Loki 副本。
 - 5Gi 是学习环境的大小；如果要保留更多日志，先确认 worker-2 磁盘。
 
-- [ ] **Step 4: 创建 Fluent Bit values**
+- [x] **Step 4: 创建 Fluent Bit values**
 
 创建 `infra/logging/values-fluent-bit.yaml`：
 
@@ -400,7 +401,7 @@ config:
 - `Drop_Single_Key raw`：当记录只剩 `log` 时，直接发送原始多行文本，Grafana 里更容易看到换行。
 - `Host` 假设 Loki Service 名称是 `loki`；Task 2 会验证，如果实际名称不同，回来改这里。
 
-- [ ] **Step 5: 创建 Grafana Loki 数据源**
+- [x] **Step 5: 创建 Grafana Loki 数据源**
 
 创建 `infra/logging/grafana-loki-datasource.yaml`：
 
@@ -434,7 +435,7 @@ data:
 - `uid: loki` 固定下来，后面文档和 Dashboard 可以引用。
 - 不要在 ConfigMap 里写 Grafana 管理员密码。
 
-- [ ] **Step 6: 创建 demo 日志服务**
+- [x] **Step 6: 创建 demo 日志服务**
 
 创建 `infra/logging/demo-service.yaml`：
 
@@ -584,11 +585,17 @@ ls -l /root/logging
 
 Expected: 看到四个文件：`values-loki.yaml`、`values-fluent-bit.yaml`、`grafana-loki-datasource.yaml`、`demo-service.yaml`。
 
-在 server 上做一次 lint：
+在 server 上做一次 lint。注意：`helm lint` 的第一个参数必须是**本地 chart 目录**，不能直接写 `repo/chart`：
 
 ```bash
-helm lint grafana-community/loki -f /root/logging/values-loki.yaml
-helm lint fluent/fluent-bit -f /root/logging/values-fluent-bit.yaml
+# 把 chart 拉到本地目录；--untar 会解压成 /tmp/helm-charts/loki
+mkdir -p /tmp/helm-charts
+helm pull grafana-community/loki --version 19.0.3 --untar -d /tmp/helm-charts
+helm pull fluent/fluent-bit --version 0.58.3 --untar -d /tmp/helm-charts
+
+# 用本地 chart 目录做 lint
+helm lint /tmp/helm-charts/loki -f /root/logging/values-loki.yaml
+helm lint /tmp/helm-charts/fluent-bit -f /root/logging/values-fluent-bit.yaml
 ```
 
 Expected: 两个 chart 都输出 `1 chart(s) linted, 0 chart(s) failed`。  
@@ -1172,6 +1179,7 @@ Expected: Loki 和 Fluent Bit 没有接近 limit；worker-2 还有可用内存�
 
 **Files:**
 - Create: `docs/02-lab/03-phase-3-acceptance.md`
+- Modify: `docs/03-qa/2026-10-22.md`
 - Modify: `docs/03-qa/00-qa-log.md`
 - Modify: `docs/README.md`
 - Modify: `docs/02-lab/00-lab-design.md`
@@ -1200,7 +1208,7 @@ LogQL 查询结果
 
 - [ ] **Step 2: 更新 Q&A**
 
-在 `docs/03-qa/00-qa-log.md` 增加阶段 3 的问答，至少覆盖：
+在 `docs/03-qa/2026-10-22.md` 增加阶段 3 当天的问答，至少覆盖：
 
 - 为什么 Loki 单机模式用 `Monolithic` 而不是 `SingleBinary`。
 - 为什么 Fluent Bit 用 DaemonSet，不用 Deployment。
@@ -1222,7 +1230,7 @@ LogQL 查询结果
 - [ ] **Step 4: 提交并推送**
 
 ```bash
-git add infra/logging docs/02-lab/03-phase-3-acceptance.md docs/03-qa/00-qa-log.md docs/README.md docs/02-lab/00-lab-design.md
+git add infra/logging docs/02-lab/03-phase-3-acceptance.md docs/03-qa/2026-10-22.md docs/03-qa/00-qa-log.md docs/README.md docs/02-lab/00-lab-design.md
 git commit -m "docs: add phase 3 logging acceptance record"
 git push
 ```

@@ -14,7 +14,7 @@
 6. [阶段 0–1 验收记录](02-lab/01-phase-0-1-acceptance.md) —— 集群底座、冒烟测试和资源基线
 7. [阶段 2 指标链路验收记录](02-lab/02-phase-2-acceptance.md) —— Prometheus、Grafana、target 和重启计数实验
 8. [kube-prometheus-stack values 解释](02-lab/03-monitoring-values-explained.md) —— 阶段 2 监控 values 逐段说明
-9. [学习问答记录](03-qa/00-qa-log.md) —— 搭建过程中真实遇到的问题、当时的回答和可复现命令
+9. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
 
 ## 学习路线
 

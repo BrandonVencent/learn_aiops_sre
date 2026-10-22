@@ -375,7 +375,7 @@ Readiness probe failed: ... connection refused
 
 Liveness 配置是 `delay=60s`、`timeout=30s`、`failure=10`，启动期间不会触发；之前的重启不是 liveness 导致的。
 
-详细问答见 [`03-qa/00-qa-log.md` 第 21 节](../03-qa/00-qa-log.md#21-grafana-反复重启oomkilled)。
+详细问答见 [`03-qa/2026-10-21.md` 第 21 节](../03-qa/2026-10-21.md#21-grafana-反复重启oomkilled)。
 
 ## 7. 容器重启计数实验
 
