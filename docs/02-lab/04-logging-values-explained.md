@@ -385,22 +385,38 @@ MinIO 是 S3 兼容对象存储。Loki chart 的某些示例会用 MinIO 存 chu
 
 我们用 `filesystem`，不需要 MinIO。关掉可以省内存和 PVC。
 
-### 2.15 `chunksCache` 和 `resultsCache`
+### 2.15 `chunksCache`、`resultsCache`、`memcached` 和 `memcachedExporter`
 
 ```yaml
 chunksCache:
   enabled: false
 resultsCache:
   enabled: false
+# chart 默认还会启用 memcached 和 exporter；缓存已关，显式关闭避免多余对象
+memcached:
+  enabled: false
+memcachedExporter:
+  enabled: false
 ```
 
-这两个是 Memcached 查询缓存。
+这四个开关要一起理解：
 
-- 开启后查询可能更快。
-- 但要额外 Pod 和内存。
-- 学习环境日志量小，先关闭。
+- `chunksCache`：查询 chunk 时用的 Memcached 缓存。
+- `resultsCache`：缓存查询结果。
+- `memcached`：chart 内置的 Memcached 服务本身。
+- `memcachedExporter`：把 Memcached 指标暴露给 Prometheus 的 exporter。
 
-如果以后查询明显变慢，再考虑打开。
+学习环境日志量小，查询缓存不是必需，先全部关闭，省内存和额外对象。
+
+这里有一个容易踩的坑：
+
+- 只写 `chunksCache.enabled: false` 和 `resultsCache.enabled: false`，chart 顶层 `memcached.enabled` 默认仍然是 `true`。
+- 结果会渲染出 `loki-memcached` 的 ServiceAccount，甚至多一个 Service。
+- 这些对象不影响 Loki 本体，但属于无用资源，也会让“渲染结果是否符合预期”的判断变复杂。
+
+所以必须把 `memcached.enabled` 和 `memcachedExporter.enabled` 也显式设为 `false`。
+
+如果以后查询明显变慢，再考虑打开缓存；打开时要同时给 Memcached 配资源，并重新评估节点内存。
 
 ### 2.16 `test.enabled: false`
 

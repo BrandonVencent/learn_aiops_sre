@@ -278,6 +278,11 @@ chunksCache:
   enabled: false
 resultsCache:
   enabled: false
+# chart 默认还会启用 memcached 和 exporter；缓存已关，显式关闭避免多余对象
+memcached:
+  enabled: false
+memcachedExporter:
+  enabled: false
 test:
   enabled: false
 
@@ -634,17 +639,29 @@ helm template loki grafana-community/loki \
   --version 19.0.3 \
   -f /root/logging/values-loki.yaml > /tmp/loki-rendered.yaml
 
-# 看 Service 名称和端口
-grep -n -A8 'kind: Service' /tmp/loki-rendered.yaml | head -40
+# 1. 这次会渲染出哪些资源类型
+grep -n '^kind:' /tmp/loki-rendered.yaml
 
-# 看 StatefulSet 名称
-grep -n 'kind: StatefulSet' /tmp/loki-rendered.yaml
+# 2. 只看真正的 Service，避免匹配到 ServiceAccount
+grep -n -A24 '^kind: Service' /tmp/loki-rendered.yaml | head -100
+
+# 3. StatefulSet 名称、副本和 serviceName
+grep -n -A35 '^kind: StatefulSet' /tmp/loki-rendered.yaml | head -60
+
+# 4. 镜像、节点选择、PVC 模板
+grep -n 'image:' /tmp/loki-rendered.yaml | head
+grep -n -A6 'nodeSelector:' /tmp/loki-rendered.yaml
+grep -n -A12 'volumeClaimTemplates:' /tmp/loki-rendered.yaml
 ```
 
 Expected:
 - 渲染成功，没有模板错误。
-- 能看到 `loki` Service 和 `3100` 端口。
-- 能看到 StatefulSet，通常是 `loki`。
+- 只有 2 个 Service：`loki`（ClusterIP，端口 `3100`）和 `loki-headless`。
+- 只有 1 个 StatefulSet：`loki`，`replicas: 1`。
+- 镜像为 `docker.io/grafana/loki:3.7.9`。
+- `nodeSelector` 为 `kubernetes.io/hostname: k8s-worker-2`。
+- `volumeClaimTemplates` 中 `storage: 5Gi`、`storageClassName: local-path`。
+- 不应再有 `loki-memcached` 的 ServiceAccount 或 Service；如果还有，检查 `memcached.enabled` 和 `memcachedExporter.enabled` 是否都为 `false`。
 
 如果渲染失败，先把完整错误贴出来；不要继续安装。
 

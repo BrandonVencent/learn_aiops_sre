@@ -67,6 +67,11 @@ chunksCache:
   enabled: false
 resultsCache:
   enabled: false
+# chart 默认还会启用 memcached 和 exporter；缓存已关，显式关闭避免多余对象
+memcached:
+  enabled: false
+memcachedExporter:
+  enabled: false
 test:
   enabled: false
 
