@@ -67,6 +67,7 @@ spec:
             severity: critical
             service: demo
             slo: availability
+            namespace: monitoring
           annotations:
             summary: "demo 可用性快速燃烧（5m/1h）"
             description: "5m 和 1h 燃烧率都超过 14.4x；检查 /error、demo 日志和 trace。"
@@ -80,6 +81,7 @@ spec:
             severity: warning
             service: demo
             slo: availability
+            namespace: monitoring
           annotations:
             summary: "demo 可用性慢速燃烧（30m/6h）"
             description: "30m 和 6h 燃烧率都超过 6x；错误在持续消耗 7d 错误预算。"
@@ -93,6 +95,7 @@ spec:
             severity: warning
             service: demo
             slo: availability
+            namespace: monitoring
           annotations:
             summary: "demo 没有请求"
             description: "5m 内没有 demo 请求，SLI 无数据；检查 demo-loadgen 和 ServiceMonitor。"
