@@ -140,13 +140,16 @@ k3s 不是「玩具」，它的 API、调度器、kubelet、CNI、RBAC 与标准
 
 **验收**：能按 namespace / pod / level 过滤；能查到一条完整的多行异常堆栈。
 
-### 阶段 4：链路追踪（可选，内存允许再做）
+### 阶段 4：链路追踪
 
-- 部署 Tempo + OTel Collector。
-- demo-service 接入 OTel SDK。
-- 用 `trace_id` 从日志跳到链路。
+> 状态：验收通过，见 [阶段 4 链路追踪验收记录](04-phase-4-acceptance.md)；三台 VM 已有 `phase-4-tracing-ready` 快照。
 
-**验收**：能看到一次请求的完整 span 树。
+- 部署 Tempo 单机模式，文件系统存储 + `local-path` PVC。
+- 部署 OTel Collector，接收 OTLP trace 并转发给 Tempo。
+- demo-service 接入 OTel Python SDK，把 `trace_id`/`span_id` 写进 JSON 日志。
+- Grafana 配置 Tempo 数据源、Loki derived field 和 `tracesToLogsV2`。
+
+**验收**：能看到一次请求的完整 span 树；日志能跳到 Tempo，Tempo 也能反查同一 trace 的 Loki 日志。
 
 ### 阶段 5：告警与 SLO
 

@@ -16,7 +16,9 @@
 8. [kube-prometheus-stack values 解释](02-lab/03-monitoring-values-explained.md) —— 阶段 2 监控 values 逐段说明
 9. [阶段 3 日志链路验收记录](02-lab/03-phase-3-acceptance.md) —— Loki、Fluent Bit、Grafana 和 traceback 多行合并
 10. [阶段 3 日志 values 解释](02-lab/04-logging-values-explained.md) —— Loki、Fluent Bit、数据源和 demo 的逐段说明
-11. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
+11. [阶段 4 链路追踪验收记录](02-lab/04-phase-4-acceptance.md) —— Tempo、OTel Collector、trace_id 和 Grafana 双向跳转
+12. [阶段 4 tracing values 解释](02-lab/05-tracing-values-explained.md) —— Tempo values、Collector pipeline、OTel SDK 和关联查询
+13. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
 
 ## 学习路线
 
@@ -25,7 +27,7 @@
 | M1 | 集群底座 | 3 节点 K8s，能部署 Pod、看事件 | 能解释 Pod 从创建到 Running 经过哪些组件 |
 | M2 | 指标链路 | Prometheus + Grafana + node-exporter + kube-state-metrics | 能用 PromQL 查出「哪个 Pod 在吃 CPU」 |
 | M3 | 日志链路 | Fluent Bit → Loki → Grafana | 能追一条日志从 stdout 到查询结果 |
-| M4 | 链路追踪 | OTel Collector + Tempo + demo 服务 | 能用 trace_id 把日志和链路串起来 |
+| M4 | 链路追踪 | OTel Collector + Tempo + demo 服务 | 已完成，见[阶段 4 验收记录](02-lab/04-phase-4-acceptance.md) |
 | M5 | 告警与 SLO | Alertmanager + SLO 规则 + 通知 | 能解释一次告警从触发到送达的路径 |
 | M6 | AI 告警摘要 | Webhook 服务 + 上下文聚合 + LLM | 输出带证据的故障摘要，而不是空泛结论 |
 | M7 | 受控运维 | 只读 Agent → 审批 → 低风险动作 | 能说清楚权限、审计、回滚怎么设计 |

@@ -454,7 +454,7 @@ Grafana / LogQL
 - 资源占用适合当前 16 GB 宿主机实验环境。
 - 三台 VM 已有 `phase-3-logging-ready` 快照，快照恢复后组件正常。
 
-下一步可以做：
+后续：
 
 1. 阶段 1 的历史快照 `phase-1-k3s-ready` 已确认，无需补打。
-2. 进入阶段 4（如果内存允许）：Tempo + OTel，把 `trace_id` 和 trace 关联起来。
+2. 阶段 4 已完成：Tempo + OTel Collector + demo OTel SDK，日志 `trace_id` 已能和 trace 双向关联。验收记录见 [阶段 4 链路追踪验收记录](04-phase-4-acceptance.md)。

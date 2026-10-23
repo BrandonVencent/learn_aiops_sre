@@ -756,7 +756,7 @@ git commit -m "feat: instrument demo service with opentelemetry"
   - Tempo trace 页的 “Logs for this span” 链接，点击打开 Loki。
   - 两边都通过嵌套 JSON 的 `trace_id` 关联。
 
-- [ ] **Step 1: 修改 `infra/logging/grafana-loki-datasource.yaml`**
+- [x] **Step 1: 修改 `infra/logging/grafana-loki-datasource.yaml`**
 
 在 `jsonData` 下增加 `derivedFields`：
 
@@ -791,7 +791,7 @@ data:
               targetBlank: true
 ```
 
-- [ ] **Step 2: 创建 `infra/tracing/grafana-tempo-datasource.yaml`**
+- [x] **Step 2: 创建 `infra/tracing/grafana-tempo-datasource.yaml`**
 
 ```yaml
 apiVersion: v1
@@ -830,7 +830,7 @@ data:
                 value: 'pod'
 ```
 
-- [ ] **Step 3: 解释 YAML 并做正则验证**
+- [x] **Step 3: 解释 YAML 并做正则验证**
 
 重点解释：
 - `derivedFields` 是 Loki 日志到 Tempo 的入口；`datasourceUid: tempo` 必须和 Tempo 数据源 UID 一致。
@@ -851,7 +851,7 @@ PY
 
 Expected: 输出 `0123456789abcdef0123456789abcdef`。
 
-- [ ] **Step 4: 应用并重启 Grafana**
+- [x] **Step 4: 应用并重启 Grafana**
 
 ```bash
 kubectl apply --dry-run=client -f infra/logging/grafana-loki-datasource.yaml
@@ -867,7 +867,7 @@ Expected:
 - Grafana rollout 成功。
 - `kubectl get configmap -n monitoring | grep -E 'loki-datasource|tempo-datasource'` 能看到两个 ConfigMap。
 
-- [ ] **Step 5: 在 Grafana UI 验证数据源**
+- [x] **Step 5: 在 Grafana UI 验证数据源**
 
 打开 `http://172.25.254.10:30030`，确认：
 - Connections → Data sources 里有 `Loki` 和 `Tempo`，没有重复的旧手工人数据源。
@@ -876,7 +876,7 @@ Expected:
 
 不记录或截图任何密码。
 
-- [ ] **Step 6: 提交 Grafana 配置**
+- [x] **Step 6: 提交 Grafana 配置**
 
 ```bash
 git add infra/logging/grafana-loki-datasource.yaml infra/tracing/grafana-tempo-datasource.yaml
@@ -894,7 +894,7 @@ git commit -m "feat: add tempo datasource and log trace links"
 - Consumes: Task 1-4 的 Tempo、Collector、demo、Grafana。
 - Produces: 至少一次完整 trace，以及日志和 trace 双向跳转的证据。
 
-- [ ] **Step 1: 生成 info 和 error 请求**
+- [x] **Step 1: 生成 info 和 error 请求**
 
 ```bash
 kubectl exec -i -n demo deploy/log-demo -- python - <<'PY'
@@ -916,7 +916,7 @@ Expected:
 - 5 次 `ok`，2 次 `error 500`。
 - 等待 5 秒，让 BatchSpanProcessor 导出。
 
-- [ ] **Step 2: 确认 Loki 里同时有 info、error 和 trace_id**
+- [x] **Step 2: 确认 Loki 里同时有 info、error 和 trace_id**
 
 在 Grafana Explore 的 Loki 查询：
 
@@ -933,7 +933,7 @@ Expected:
 - error 记录仍带完整 Python traceback。
 - 点开日志行的 `TraceID` 链接，应能跳到 Tempo。
 
-- [ ] **Step 3: 在 Tempo 里确认 span 树**
+- [x] **Step 3: 在 Tempo 里确认 span 树**
 
 在 Grafana Explore 选择 `Tempo`，用 TraceQL 或 Search：
 - Service name: `log-demo`
@@ -945,7 +945,7 @@ Expected:
 - `/error` 的 trace 下有 `demo.fail` 子 span，状态为 error。
 - 点击 trace 页的 “Logs for this span”，能回到 Loki 并看到同一 `trace_id` 的日志。
 
-- [ ] **Step 4: 用 API 交叉验证**
+- [x] **Step 4: 用 API 交叉验证**
 
 ```bash
 kubectl exec -i -n demo deploy/log-demo -- python - <<'PY'
@@ -962,7 +962,7 @@ Expected:
 - `traces` 数组非空。
 - 每个 trace 有 `traceID`，并且和 Loki 日志里的 `trace_id` 能对上。
 
-- [ ] **Step 5: 检查资源占用**
+- [x] **Step 5: 检查资源占用**
 
 ```bash
 kubectl top pods -n tracing
@@ -992,7 +992,7 @@ Expected:
 - Consumes: Task 1-5 的实际输出。
 - Produces: 可复现的阶段 4 验收记录、YAML 解释、Q&A 和 `phase-4-tracing-ready` 快照。
 
-- [ ] **Step 1: 写阶段 4 验收记录**
+- [x] **Step 1: 写阶段 4 验收记录**
 
 至少包含：
 - 环境、chart/image 版本、命名空间。
@@ -1003,7 +1003,7 @@ Expected:
 - 资源占用。
 - 偏差和未完成项。
 
-- [ ] **Step 2: 写 YAML/values 解释文档**
+- [x] **Step 2: 写 YAML/values 解释文档**
 
 `docs/02-lab/05-tracing-values-explained.md` 至少解释：
 - 为什么 Tempo 用单机文件系统，不用 S3/MinIO。
@@ -1014,17 +1014,17 @@ Expected:
 - Loki derived field 和 Tempo `tracesToLogsV2` 的嵌套 JSON 查询。
 - 为什么 `trace_id` 不做 Loki label。
 
-- [ ] **Step 3: 更新 Q&A 和索引**
+- [x] **Step 3: 更新 Q&A 和索引**
 
 `docs/03-qa/2026-10-23.md` 记录当天实际命令、输出、错误和修复；`docs/03-qa/00-qa-log.md` 增加一行索引。
 
-- [ ] **Step 4: 更新 README 和实验设计**
+- [x] **Step 4: 更新 README 和实验设计**
 
 - `docs/README.md` 的 M4 行标记为已完成，并加入验收记录链接。
 - `docs/02-lab/00-lab-design.md` 的阶段 4 增加状态和验收链接。
 - 阶段 3 验收记录中的“进入阶段 4”改为“阶段 4 已完成”。
 
-- [ ] **Step 5: 打快照**
+- [x] **Step 5: 打快照**
 
 三台 VM 干净关机：
 
