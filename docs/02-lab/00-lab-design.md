@@ -153,12 +153,14 @@ k3s 不是「玩具」，它的 API、调度器、kubelet、CNI、RBAC 与标准
 
 ### 阶段 5：告警与 SLO
 
+> 状态：验收通过（SlowBurn 长窗口为已知偏差），见 [阶段 5 告警与 SLO 验收记录](06-phase-5-acceptance.md) 和 [阶段 5 告警与 SLO 解释](07-alerting-values-explained.md)；三台 VM 已有 `phase-5-alerting-ready` 快照。
+
 - 定义 demo-service 的 SLI/SLO。
 - 配置多窗口燃烧率告警。
 - 配置 Alertmanager 路由、分组、抑制、静默。
 - 接一个本地 webhook 或 IM 通知。
 
-**验收**：能解释一次告警从规则到通知的完整路径。
+**验收**：能解释一次告警从规则到通知的完整路径；FastBurn 真实触发并 resolved，SlowBurn 长窗口行为单独记录。
 
 ### 阶段 6：AI 告警摘要
 

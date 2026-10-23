@@ -1331,7 +1331,7 @@ git commit -m "feat: route demo alerts through alertmanager"
 - Consumes: Task 1-5 的实际输出。
 - Produces: 可复现的阶段 5 验收记录、YAML/PromQL 解释、Q&A 和 `phase-5-alerting-ready` 快照。
 
-- [ ] **Step 1: 写验收记录**
+- [x] **Step 1: 写验收记录**
 
 至少包含：
 
@@ -1346,7 +1346,7 @@ git commit -m "feat: route demo alerts through alertmanager"
 - 偏差和未完成项（slow burn 没有真实跑满 6h 等）。
 - 快照结果。
 
-- [ ] **Step 2: 写 YAML/PromQL 解释文档**
+- [x] **Step 2: 写 YAML/PromQL 解释文档**
 
 `docs/02-lab/07-alerting-values-explained.md` 至少解释：
 
@@ -1362,7 +1362,7 @@ git commit -m "feat: route demo alerts through alertmanager"
 - 静默和抑制的区别：抑制是规则自动做，静默是人手动设。
 - 常见错误：`up=0`、指标无数据、Alertmanager 配置没合并、webhook 503、静默忘记删除。
 
-- [ ] **Step 3: 更新 Q&A 和索引**
+- [x] **Step 3: 更新 Q&A 和索引**
 
 在 `docs/03-qa/2026-10-23.md` 增加当天问题，例如：
 
@@ -1375,12 +1375,12 @@ git commit -m "feat: route demo alerts through alertmanager"
 
 更新 `docs/03-qa/00-qa-log.md` 当天索引。
 
-- [ ] **Step 4: 更新 README 和实验设计**
+- [x] **Step 4: 更新 README 和实验设计**
 
 - `docs/README.md`：阅读顺序加入阶段 5 验收记录和 YAML 解释；M5 标记完成并链接。
 - `docs/02-lab/00-lab-design.md`：阶段 5 加状态、验收记录链接和快照说明。
 
-- [ ] **Step 5: 检查资源**
+- [x] **Step 5: 检查资源**
 
 ```bash
 kubectl top pods -n demo
@@ -1390,7 +1390,7 @@ kubectl top nodes
 
 Expected: 新增 `demo-loadgen`、`alert-webhook` 都是小内存；节点内存没有接近 80%。
 
-- [ ] **Step 6: 创建快照**
+- [x] **Step 6: 创建快照**
 
 按阶段 4 的方式：
 
