@@ -1399,7 +1399,7 @@ Expected: 新增 `demo-loadgen`、`alert-webhook` 都是小内存；节点内存
 3. 开机后确认三节点 Ready，`monitoring`、`demo`、`logging`、`tracing` 的 Pod 正常。
 4. 确认 Alertmanager UI `http://172.25.254.10:30093` 能看到配置，webhook 仍能收到测试告警。
 
-- [ ] **Step 7: 提交并推送**
+- [x] **Step 7: 提交并推送**
 
 ```bash
 git add docs/README.md docs/02-lab/00-lab-design.md \
@@ -1416,13 +1416,13 @@ git -c http.proxy= -c https.proxy= push
 
 ## 完成标准
 
-- [ ] `demo` 的 `/metrics` 返回 `demo_http_requests_total` 和延迟直方图。
-- [ ] `/metrics`、`/healthz` 不产生日志和 trace。
-- [ ] Prometheus target `up{namespace="demo"}` 为 `1`。
-- [ ] 正常流量下 `demo:sli_availability:ratio_rate5m` 约为 `1`，burn rate 约为 `0`。
-- [ ] `DemoAvailabilityFastBurn` 在错误注入后进入 firing，Alertmanager 路由到 `/webhook/critical`。
-- [ ] 恢复流量后告警 resolved，webhook 收到 resolved。
-- [ ] 合成告警验证了 critical/warning 路由、同组聚合、critical 抑制 warning、静默阻止通知。
-- [ ] 静默测试后已删除，合成告警已清理。
-- [ ] 验收记录、YAML 解释、Q&A 已提交并推送。
-- [ ] 三台 VM 有 `phase-5-alerting-ready` 快照。
+- [x] `demo` 的 `/metrics` 返回 `demo_http_requests_total` 和延迟直方图。
+- [x] `/metrics`、`/healthz` 不产生日志和 trace。
+- [x] Prometheus target `up{namespace="demo"}` 为 `1`。
+- [x] 正常流量下 `demo:sli_availability:ratio_rate5m` 约为 `1`，burn rate 约为 `0`。
+- [x] `DemoAvailabilityFastBurn` 在错误注入后进入 firing，Alertmanager 路由到 `/webhook/critical`。
+- [x] 恢复流量后告警 resolved，webhook 收到 resolved。
+- [x] 合成告警验证了 critical/warning 路由、同组聚合、critical 抑制 warning、静默阻止通知。
+- [x] 静默测试后已删除，合成告警已清理。
+- [x] 验收记录、YAML 解释、Q&A 已提交并推送。
+- [x] 三台 VM 有 `phase-5-alerting-ready` 快照。
