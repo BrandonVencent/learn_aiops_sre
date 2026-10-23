@@ -1,0 +1,98 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-slo
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: demo-slo-recording
+      interval: 30s
+      rules:
+        - record: demo:sli_availability:ratio_rate5m
+          expr: |
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[5m]))
+              or
+              vector(0)
+            )
+            /
+            sum(rate(demo_http_requests_total[5m]))
+        - record: demo:sli_availability:ratio_rate1h
+          expr: |
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[1h]))
+              or
+              vector(0)
+            )
+            /
+            sum(rate(demo_http_requests_total[1h]))
+        - record: demo:sli_availability:ratio_rate30m
+          expr: |
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[30m]))
+              or
+              vector(0)
+            )
+            /
+            sum(rate(demo_http_requests_total[30m]))
+        - record: demo:sli_availability:ratio_rate6h
+          expr: |
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[6h]))
+              or
+              vector(0)
+            )
+            /
+            sum(rate(demo_http_requests_total[6h]))
+        - record: demo:error_budget_burn_rate5m
+          expr: clamp_min(1 - demo:sli_availability:ratio_rate5m, 0) / 0.01
+        - record: demo:error_budget_burn_rate1h
+          expr: clamp_min(1 - demo:sli_availability:ratio_rate1h, 0) / 0.01
+        - record: demo:error_budget_burn_rate30m
+          expr: clamp_min(1 - demo:sli_availability:ratio_rate30m, 0) / 0.01
+        - record: demo:error_budget_burn_rate6h
+          expr: clamp_min(1 - demo:sli_availability:ratio_rate6h, 0) / 0.01
+    - name: demo-slo-alerts
+      interval: 30s
+      rules:
+        - alert: DemoAvailabilityFastBurn
+          expr: |
+            demo:error_budget_burn_rate5m > 14.4
+            and
+            demo:error_budget_burn_rate1h > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            service: demo
+            slo: availability
+          annotations:
+            summary: "demo 可用性快速燃烧（5m/1h）"
+            description: "5m 和 1h 燃烧率都超过 14.4x；检查 /error、demo 日志和 trace。"
+        - alert: DemoAvailabilitySlowBurn
+          expr: |
+            demo:error_budget_burn_rate30m > 6
+            and
+            demo:error_budget_burn_rate6h > 6
+          for: 15m
+          labels:
+            severity: warning
+            service: demo
+            slo: availability
+          annotations:
+            summary: "demo 可用性慢速燃烧（30m/6h）"
+            description: "30m 和 6h 燃烧率都超过 6x；错误在持续消耗 7d 错误预算。"
+        - alert: DemoNoTraffic
+          expr: |
+            sum(rate(demo_http_requests_total[5m])) == 0
+            or
+            absent(sum(rate(demo_http_requests_total[5m])))
+          for: 10m
+          labels:
+            severity: warning
+            service: demo
+            slo: availability
+          annotations:
+            summary: "demo 没有请求"
+            description: "5m 内没有 demo 请求，SLI 无数据；检查 demo-loadgen 和 ServiceMonitor。"
