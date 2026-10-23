@@ -457,7 +457,7 @@ git commit -m "feat: add otel collector"
   - JSON 日志新增 32 位 `trace_id`、16 位 `span_id`。
   - `/` 返回 200 和 info 日志；`/error` 返回 500、error 日志和 Python traceback。
 
-- [ ] **Step 1: 创建 `infra/tracing/demo-service-otel.yaml`**
+- [x] **Step 1: 创建 `infra/tracing/demo-service-otel.yaml`**
 
 在 `data.app.py` 中写入下面的代码。注意 ConfigMap 里的 Python 代码必须保持 4 空格缩进。
 
@@ -544,6 +544,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+
+        # 探针不生成 trace/log，避免每 5 秒污染 Tempo 和 Loki
+        if path == "/healthz":
+            self._send(200, "ok\n")
+            return
+
         carrier = {key.lower(): value for key, value in self.headers.items()}
         parent_context = propagate.extract(carrier)
 
@@ -654,7 +660,7 @@ spec:
             failureThreshold: 30
           readinessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -687,6 +693,7 @@ spec:
 - `BatchSpanProcessor` 的批量导出和 5 秒左右的可见延迟。
 - `trace_id`/`span_id` 如何从当前 span 取出来写进日志。
 - `startupProbe` 为什么给 150 秒，`readinessProbe` 为什么可以更早开始。
+- 为什么 readiness 用 `/healthz` 而不是 `/`：避免每 5 秒的探针请求生成日志和 trace。
 - `/error` 为什么同时设置 span status、记录 exception、输出 traceback。
 
 校验：
@@ -702,7 +709,7 @@ Expected:
 - rollout 成功，Pod `1/1 Running`。
 - 如果 Pod 卡在 `Init`/`0/1`，先看 `kubectl logs`，大概率是 `pip install` 网络或版本问题。
 
-- [ ] **Step 3: 验证日志里的 trace_id 和 span_id**
+- [x] **Step 3: 验证日志里的 trace_id 和 span_id**
 
 ```bash
 kubectl exec -n demo deploy/log-demo -- \
@@ -716,7 +723,7 @@ Expected:
 - 日志是 JSON，包含 `"level": "info"`、`"trace_id": "<32位十六进制>"`、`"span_id": "<16位十六进制>"`。
 - 如果仍是 `demo-trace-001`，说明当前 span 没有生效；不要继续做 Grafana 关联。
 
-- [ ] **Step 4: 验证 Tempo 已经收到 trace**
+- [x] **Step 4: 验证 Tempo 已经收到 trace**
 
 ```bash
 kubectl exec -n demo deploy/log-demo -- \
@@ -727,7 +734,7 @@ Expected:
 - 返回 JSON，`traces` 数组非空，里面有 `traceID`。
 - 如果为空，等 5 秒再查一次；仍为空就查 `kubectl logs -n tracing deploy/otel-collector` 和 `kubectl logs -n tracing tempo-0`。
 
-- [ ] **Step 5: 提交 demo 变更**
+- [x] **Step 5: 提交 demo 变更**
 
 ```bash
 git add infra/tracing/demo-service-otel.yaml
