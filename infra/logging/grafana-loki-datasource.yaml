@@ -19,3 +19,13 @@ data:
         editable: false
         jsonData:
           maxLines: 1000
+          derivedFields:
+            - name: TraceID
+              matcherType: regex
+              # 匹配外层转义 JSON 里的 trace_id；捕获 32 位十六进制
+              matcherRegex: 'trace_id[^a-f0-9]*([a-f0-9]{32})'
+              datasourceUid: tempo
+              # 两个 $$ 是 Grafana provisioning 的转义，最终是 ${__value.raw}
+              url: '$${__value.raw}'
+              urlDisplayLabel: 'View trace'
+              targetBlank: true

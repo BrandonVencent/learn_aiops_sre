@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-datasource
+  namespace: monitoring
+  labels:
+    # kube-prometheus-stack 的 Grafana datasource sidecar 用这个标签发现配置
+    grafana_datasource: "1"
+data:
+  tempo-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.tracing.svc.cluster.local:3200
+        isDefault: false
+        editable: false
+        jsonData:
+          nodeGraph:
+            enabled: true
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: '-5m'
+            spanEndTimeShift: '5m'
+            customQuery: true
+            # 外层 Fluent Bit JSON 的 log 字段里才是应用 JSON
+            query: '{namespace="demo", pod=~"log-demo-.*"} | json | line_format "{{.log}}" | json | trace_id="$${__trace.traceId}"'
+            tags:
+              - key: 'service.name'
+                value: 'service'
+              - key: 'k8s.namespace.name'
+                value: 'namespace'
+              - key: 'k8s.pod.name'
+                value: 'pod'
