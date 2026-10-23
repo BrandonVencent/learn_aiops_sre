@@ -45,7 +45,7 @@
 - Consumes: 阶段 3 的 `logging`、`monitoring`、`demo` 命名空间和 `phase-3-logging-ready` 快照。
 - Produces: 当前节点、Pod、内存基线，以及 Tempo chart 实际版本。
 
-- [ ] **Step 1: 确认集群和阶段 3 仍然正常**
+- [x] **Step 1: 确认集群和阶段 3 仍然正常**
 
 ```bash
 kubectl get nodes
@@ -60,7 +60,7 @@ Expected:
 - `log-demo` 为 `1/1 Running`。
 - `k8s-server` 内存不要超过 75%；如果超过，先停下来重新评估 Tempo 放哪里。
 
-- [ ] **Step 2: 确认 Helm 仓库和 Tempo chart 版本**
+- [x] **Step 2: 确认 Helm 仓库和 Tempo chart 版本**
 
 ```bash
 helm repo add grafana-community https://grafana-community.github.io/helm-charts
@@ -74,7 +74,7 @@ Expected:
 - chart 版本为 `3.2.1`，`appVersion` 为 `3.1.1`。
 - 如果 `3.2.1` 不存在，停止并记录实际版本，不要直接换版本继续。
 
-- [ ] **Step 3: 把实际结果记到今天 Q&A 的“实际结果”区**
+- [x] **Step 3: 把实际结果记到今天 Q&A 的“实际结果”区**
 
 只记录版本和资源数字，不记录任何密码或 token。
 
@@ -94,7 +94,7 @@ Expected:
   - Service `tempo.tracing.svc.cluster.local:4318`：OTLP/HTTP。
   - StatefulSet `tempo`，Pod `tempo-0`，PVC `storage-tempo-0`。
 
-- [ ] **Step 1: 创建 `infra/tracing/values-tempo.yaml`**
+- [x] **Step 1: 创建 `infra/tracing/values-tempo.yaml`**
 
 ```yaml
 # Grafana Tempo 单机模式（chart 内部就是 Single Binary）
@@ -175,7 +175,7 @@ serviceMonitor:
   enabled: false
 ```
 
-- [ ] **Step 2: 解释 YAML 后再拷贝到 server**
+- [x] **Step 2: 解释 YAML 后再拷贝到 server**
 
 在聊天里逐段说明：
 - `replicas` 和 `tempo.resources`：单副本和内存上限。
@@ -190,7 +190,7 @@ mkdir -p /root/tracing
 scp infra/tracing/values-tempo.yaml root@172.25.254.10:/root/tracing/
 ```
 
-- [ ] **Step 3: 渲染并检查对象**
+- [x] **Step 3: 渲染并检查对象**
 
 ```bash
 cd /root/tracing
@@ -209,7 +209,7 @@ Expected:
 - 能看到 `block_retention: 168h`（或等价的 `168h0m0s`）。
 - 如果 `jaeger` receiver 仍然存在，不影响本阶段；不要为了删它改坏 chart 默认配置。
 
-- [ ] **Step 4: 安装 Tempo**
+- [x] **Step 4: 安装 Tempo**
 
 ```bash
 helm upgrade --install tempo grafana-community/tempo \
@@ -225,7 +225,7 @@ Expected:
 - 输出 `STATUS: deployed`。
 - 如果超时，先执行 `kubectl get pod,pvc -n tracing`，不要连续重装。
 
-- [ ] **Step 5: 验证 Tempo Pod、PVC 和 Service**
+- [x] **Step 5: 验证 Tempo Pod、PVC 和 Service**
 
 ```bash
 kubectl get statefulset,pod,pvc,svc -n tracing -o wide
@@ -238,7 +238,7 @@ Expected:
 - Service `tempo` 有 `3200`、`4317`、`4318` 端口。
 - 日志中没有 `permission denied`、`failed to create`、`no such file`。
 
-- [ ] **Step 6: 从集群内验证 Tempo 就绪和 API**
+- [x] **Step 6: 从集群内验证 Tempo 就绪和 API**
 
 ```bash
 kubectl run tempo-check --rm -it --restart=Never \
@@ -250,7 +250,7 @@ Expected:
 - 返回 `ready`。
 - 如果 Pod 一直 `ImagePullBackOff`，先检查镜像仓库网络，不要改 Tempo 配置。
 
-- [ ] **Step 7: 提交 Tempo 配置**
+- [x] **Step 7: 提交 Tempo 配置**
 
 ```bash
 git add infra/tracing/values-tempo.yaml
@@ -273,7 +273,7 @@ git commit -m "feat: add tempo tracing backend"
   - Service `otel-collector`，端口 `4317`、`4318`。
   - health_check `:13133`，仅用于 Pod 探针。
 
-- [ ] **Step 1: 创建 `infra/tracing/otel-collector.yaml`**
+- [x] **Step 1: 创建 `infra/tracing/otel-collector.yaml`**
 
 ```yaml
 apiVersion: v1
@@ -306,7 +306,7 @@ data:
         send_batch_size: 1024
 
     exporters:
-      otlp:
+      otlp_grpc:
         endpoint: tempo.tracing.svc.cluster.local:4317
         tls:
           insecure: true
@@ -326,7 +326,7 @@ data:
             - memory_limiter
             - batch
           exporters:
-            - otlp
+            - otlp_grpc
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -406,7 +406,7 @@ spec:
       targetPort: otlp-http
 ```
 
-- [ ] **Step 2: 解释 YAML 后再应用**
+- [x] **Step 2: 解释 YAML 后再应用**
 
 重点解释：
 - 为什么 Collector 只保留 `traces` pipeline，不复采集日志和指标。
@@ -421,7 +421,7 @@ kubectl apply --dry-run=client -f infra/tracing/otel-collector.yaml
 kubectl apply -f infra/tracing/otel-collector.yaml
 ```
 
-- [ ] **Step 3: 验证 Collector**
+- [x] **Step 3: 验证 Collector**
 
 ```bash
 kubectl get deploy,pod,svc,endpoints -n tracing -o wide
@@ -434,7 +434,7 @@ Expected:
 - 日志出现 `Everything is ready. Begin running and processing data.` 或类似就绪信息。
 - 没有 `failed to connect`、`connection refused`。
 
-- [ ] **Step 4: 提交 Collector 配置**
+- [x] **Step 4: 提交 Collector 配置**
 
 ```bash
 git add infra/tracing/otel-collector.yaml
