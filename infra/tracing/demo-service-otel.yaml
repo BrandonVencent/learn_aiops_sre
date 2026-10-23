@@ -10,10 +10,18 @@ data:
     import logging
     import os
     import sys
+    import time
     import traceback
     from datetime import datetime, timezone
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from urllib.parse import urlparse
+
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST,
+        Counter,
+        Histogram,
+        generate_latest,
+    )
 
     from opentelemetry import propagate, trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -26,6 +34,18 @@ data:
         stream=sys.stdout,
         level=logging.INFO,
         format="%(message)s",
+    )
+
+    REQUEST_COUNT = Counter(
+        "demo_http_requests_total",
+        "Total HTTP requests handled by log-demo.",
+        ["method", "path", "status"],
+    )
+    REQUEST_DURATION = Histogram(
+        "demo_http_request_duration_seconds",
+        "HTTP request duration for log-demo.",
+        ["method", "path"],
+        buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
     )
 
     SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "log-demo")
@@ -76,55 +96,76 @@ data:
         )
 
     class Handler(BaseHTTPRequestHandler):
-        def _send(self, status, body):
+        def _send(self, status, body, content_type="text/plain; charset=utf-8"):
             self.send_response(status)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.end_headers()
             self.wfile.write(body.encode("utf-8"))
 
         def do_GET(self):
             path = urlparse(self.path).path
 
+            # 抓取端点不生成 trace/log，也不计入业务请求指标
+            if path == "/metrics":
+                self._send(
+                    200,
+                    generate_latest().decode("utf-8"),
+                    CONTENT_TYPE_LATEST,
+                )
+                return
+
             # 探针不生成 trace/log，避免每 5 秒污染 Tempo 和 Loki
             if path == "/healthz":
                 self._send(200, "ok\n")
                 return
 
-            carrier = {key.lower(): value for key, value in self.headers.items()}
-            parent_context = propagate.extract(carrier)
+            start = time.perf_counter()
+            status = 500
+            metric_path = path if path in ("/", "/error") else "other"
 
-            with tracer.start_as_current_span(
-                f"GET {path}",
-                context=parent_context,
-                kind=trace.SpanKind.SERVER,
-            ) as span:
-                span.set_attribute("http.request.method", "GET")
-                span.set_attribute("url.path", path)
-                span.set_attribute("url.scheme", "http")
+            try:
+                carrier = {key.lower(): value for key, value in self.headers.items()}
+                parent_context = propagate.extract(carrier)
 
-                if path == "/error":
-                    try:
-                        with tracer.start_as_current_span("demo.fail") as child:
-                            try:
-                                raise RuntimeError("demo error for Loki")
-                            except RuntimeError as exc:
-                                child.record_exception(exc)
-                                child.set_status(Status(StatusCode.ERROR, str(exc)))
-                                span.set_status(Status(StatusCode.ERROR, str(exc)))
-                                emit("error", "demo error for Loki")
-                                traceback.print_exc()
-                    except Exception:
-                        pass
+                with tracer.start_as_current_span(
+                    f"GET {path}",
+                    context=parent_context,
+                    kind=trace.SpanKind.SERVER,
+                ) as span:
+                    span.set_attribute("http.request.method", "GET")
+                    span.set_attribute("url.path", path)
+                    span.set_attribute("url.scheme", "http")
 
-                    self._send(500, "error\n")
-                    span.set_attribute("http.response.status_code", 500)
-                    return
+                    if path == "/error":
+                        try:
+                            with tracer.start_as_current_span("demo.fail") as child:
+                                try:
+                                    raise RuntimeError("demo error for Loki")
+                                except RuntimeError as exc:
+                                    child.record_exception(exc)
+                                    child.set_status(Status(StatusCode.ERROR, str(exc)))
+                                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                                    emit("error", "demo error for Loki")
+                                    traceback.print_exc()
+                        except Exception:
+                            pass
 
-                with tracer.start_as_current_span("demo.hello"):
-                    emit("info", "hello from log-demo")
+                        status = 500
+                        self._send(500, "error\n")
+                        span.set_attribute("http.response.status_code", 500)
+                        return
 
-                self._send(200, "ok\n")
-                span.set_attribute("http.response.status_code", 200)
+                    with tracer.start_as_current_span("demo.hello"):
+                        emit("info", "hello from log-demo")
+
+                    status = 200
+                    self._send(200, "ok\n")
+                    span.set_attribute("http.response.status_code", 200)
+            finally:
+                REQUEST_DURATION.labels("GET", metric_path).observe(
+                    time.perf_counter() - start
+                )
+                REQUEST_COUNT.labels("GET", metric_path, str(status)).inc()
 
         def log_message(self, fmt, *args):
             return
@@ -159,7 +200,8 @@ spec:
             - |
               pip install --no-cache-dir --disable-pip-version-check \
                 opentelemetry-sdk==1.45.1 \
-                opentelemetry-exporter-otlp-proto-http==1.45.1
+                opentelemetry-exporter-otlp-proto-http==1.45.1 \
+                prometheus-client==0.21.1
               exec python -u /app/app.py
           ports:
             - name: http
@@ -203,6 +245,8 @@ kind: Service
 metadata:
   name: log-demo
   namespace: demo
+  labels:
+    app: log-demo
 spec:
   selector:
     app: log-demo
