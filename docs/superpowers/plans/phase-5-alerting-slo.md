@@ -638,7 +638,7 @@ git commit -m "feat: add demo slo burn-rate alerts"
   - 路径 `/webhook/default`、`/webhook/critical`、`/webhook/warning`
   - 每个 POST 在日志里打印 `ts`、`path`、`payload`
 
-- [ ] **Step 1: 写 ConfigMap、Deployment、Service**
+- [x] **Step 1: 写 ConfigMap、Deployment、Service**
 
 ```yaml
 apiVersion: v1
@@ -770,7 +770,7 @@ spec:
       targetPort: http
 ```
 
-- [ ] **Step 2: 应用并检查**
+- [x] **Step 2: 应用并检查**
 
 ```bash
 kubectl apply -f /root/alerting/alert-webhook.yaml
@@ -780,7 +780,7 @@ kubectl get pod,svc -n monitoring -l app=alert-webhook -o wide
 
 Expected: Pod `1/1 Running`；Service `alert-webhook` 的 `8080/TCP`。
 
-- [ ] **Step 3: 测试健康检查和 POST**
+- [x] **Step 3: 测试健康检查和 POST**
 
 ```bash
 kubectl exec -i -n demo deploy/log-demo -- python - <<'PY'
@@ -810,7 +810,7 @@ Expected:
 - `post: ok`
 - 日志里有 `"path": "/webhook/test"` 和 `"alertname": "WebhookTest"`。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add infra/alerting/alert-webhook.yaml
