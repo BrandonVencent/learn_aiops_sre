@@ -1053,7 +1053,7 @@ Expected:
 - Grafana 和 Prometheus 正常。
 - 快照创建后，再执行一次 Grafana 日志到 trace 的跳转检查。
 
-- [ ] **Step 6: 提交并推送**
+- [x] **Step 6: 提交并推送**
 
 ```bash
 git add docs infra/tracing infra/logging/grafana-loki-datasource.yaml
@@ -1085,12 +1085,12 @@ kubectl rollout restart deployment/kube-prometheus-stack-grafana -n monitoring
 
 ## 完成标准
 
-- [ ] Tempo `tempo-0` 为 `1/1 Running`，PVC `Bound`。
-- [ ] Collector `otel-collector` 为 `1/1 Running`，Tempo 能收到 OTLP。
-- [ ] `log-demo` 日志带 32 位 `trace_id` 和 16 位 `span_id`。
-- [ ] Tempo 能看到一次请求的完整 span 树。
-- [ ] Loki 日志能跳到 Tempo，Tempo 能反查 Loki。
-- [ ] 阶段 3 的日志查询和 traceback 多行合并仍然正常。
-- [ ] 资源占用在 16 GB 实验环境可接受。
-- [ ] 验收记录、YAML 解释、Q&A 已提交并推送。
-- [ ] 三台 VM 有 `phase-4-tracing-ready` 快照。
+- [x] Tempo `tempo-0` 为 `1/1 Running`，PVC `Bound`。
+- [x] Collector `otel-collector` 为 `1/1 Running`，Tempo 能收到 OTLP。
+- [x] `log-demo` 日志带 32 位 `trace_id` 和 16 位 `span_id`。
+- [x] Tempo 能看到一次请求的完整 span 树。
+- [x] Loki 日志能跳到 Tempo，Tempo 能反查 Loki。
+- [x] 阶段 3 的日志查询和 traceback 多行合并仍然正常。
+- [x] 资源占用在 16 GB 实验环境可接受。
+- [x] 验收记录、YAML 解释、Q&A 已提交并推送。
+- [x] 三台 VM 有 `phase-4-tracing-ready` 快照。
