@@ -1,0 +1,55 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: demo-alerting
+  namespace: monitoring
+  labels:
+    alertmanagerConfig: main
+spec:
+  route:
+    receiver: webhook-default
+    groupBy:
+      - alertname
+      - service
+      - severity
+    groupWait: 10s
+    groupInterval: 30s
+    repeatInterval: 1h
+    routes:
+      - receiver: webhook-critical
+        matchers:
+          - name: severity
+            value: critical
+            matchType: "="
+        repeatInterval: 30m
+      - receiver: webhook-warning
+        matchers:
+          - name: severity
+            value: warning
+            matchType: "="
+        repeatInterval: 2h
+  receivers:
+    - name: webhook-default
+      webhookConfigs:
+        - url: http://alert-webhook.monitoring.svc.cluster.local:8080/webhook/default
+          sendResolved: true
+    - name: webhook-critical
+      webhookConfigs:
+        - url: http://alert-webhook.monitoring.svc.cluster.local:8080/webhook/critical
+          sendResolved: true
+    - name: webhook-warning
+      webhookConfigs:
+        - url: http://alert-webhook.monitoring.svc.cluster.local:8080/webhook/warning
+          sendResolved: true
+  inhibitRules:
+    - sourceMatch:
+        - name: severity
+          value: critical
+          matchType: "="
+      targetMatch:
+        - name: severity
+          value: warning
+          matchType: "="
+      equal:
+        - service
+        - slo
