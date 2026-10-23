@@ -1,0 +1,80 @@
+# Grafana Tempo 单机模式（chart 内部就是 Single Binary）
+# 安装命令：
+# helm upgrade --install tempo grafana-community/tempo \
+#   -n tracing --create-namespace --version 3.2.1 \
+#   -f values-tempo.yaml --wait --timeout 10m
+
+replicas: 1
+
+tempo:
+  # 固定镜像版本，避免 chart 升级时悄悄换 Tempo
+  registry: docker.io
+  repository: grafana/tempo
+  tag: "3.1.1"
+  pullPolicy: IfNotPresent
+
+  # 实验环境：单进程处理所有角色
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # 关闭匿名使用统计
+  reportingEnabled: false
+
+  # 允许 Grafana 通过 HTTP 流式查询
+  streamOverHttpEnabled: true
+
+  # 只保留 7 天，和 Loki 保持一致
+  retention: 168h
+
+  # 单机文件系统存储；生产环境应换对象存储
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+
+  server:
+    http_listen_port: 3200
+
+  # 只保留 OTLP receiver；Collector 通过 4317/4318 发进来
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+  # 本阶段不做 span metrics / service graph
+  metricsGenerator:
+    enabled: false
+
+# 放在 server 节点：内存 6 GB，磁盘 60 GB，适合做追踪后端
+nodeSelector:
+  kubernetes.io/hostname: k8s-server
+
+# 持久化 trace 和 WAL
+persistence:
+  enabled: true
+  storageClassName: local-path
+  accessModes:
+    - ReadWriteOnce
+  size: 5Gi
+
+service:
+  type: ClusterIP
+
+# 不安装 Jaeger Query 兼容层，节省内存；Grafana 直接查 Tempo
+tempoQuery:
+  enabled: false
+
+# 暂不接 Prometheus Operator 的 ServiceMonitor
+serviceMonitor:
+  enabled: false
