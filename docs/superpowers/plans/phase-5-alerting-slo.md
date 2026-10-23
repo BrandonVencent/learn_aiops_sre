@@ -296,7 +296,7 @@ git commit -m "feat: expose demo prometheus metrics"
   - Prometheus target：`namespace="demo"` 的 `log-demo` metrics。
   - `demo-loadgen` Deployment；环境变量 `TARGET_PATH`、`INTERVAL_SECONDS`。
 
-- [ ] **Step 1: 写 ServiceMonitor**
+- [x] **Step 1: 写 ServiceMonitor**
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -320,7 +320,7 @@ spec:
       scrapeTimeout: 10s
 ```
 
-- [ ] **Step 2: 写低速率 loadgen**
+- [x] **Step 2: 写低速率 loadgen**
 
 ```yaml
 apiVersion: apps/v1
@@ -371,7 +371,7 @@ spec:
 
 `INTERVAL_SECONDS=2` 是每秒约 0.5 个请求。这个速率足够算 5m 比例，又不会把 Loki/Tempo 写爆。
 
-- [ ] **Step 3: 应用并检查**
+- [x] **Step 3: 应用并检查**
 
 ```bash
 kubectl apply -f /root/alerting/demo-servicemonitor.yaml
@@ -382,7 +382,7 @@ kubectl get deploy,pod -n demo -l app=demo-loadgen -o wide
 
 Expected: ServiceMonitor 存在；loadgen Pod `1/1 Running`。
 
-- [ ] **Step 4: 等 Prometheus 抓取**
+- [x] **Step 4: 等 Prometheus 抓取**
 
 ```bash
 sleep 45
@@ -411,7 +411,7 @@ Expected:
 
 如果两个 `up` 都为空，先看 Prometheus `Status → Targets`，再检查 ServiceMonitor 的 `namespaceSelector` 和 Service 的 `app: log-demo` 标签。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add infra/alerting/demo-servicemonitor.yaml infra/alerting/demo-loadgen.yaml
@@ -438,7 +438,7 @@ git commit -m "feat: scrape demo metrics with load generator"
   - `demo:error_budget_burn_rate6h`
   - 告警 `DemoAvailabilityFastBurn`、`DemoAvailabilitySlowBurn`、`DemoNoTraffic`
 
-- [ ] **Step 1: 写 PrometheusRule**
+- [x] **Step 1: 写 PrometheusRule**
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -455,22 +455,38 @@ spec:
       rules:
         - record: demo:sli_availability:ratio_rate5m
           expr: |
-            sum(rate(demo_http_requests_total{status=~"2..|3.."}[5m]))
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[5m]))
+              or
+              vector(0)
+            )
             /
             sum(rate(demo_http_requests_total[5m]))
         - record: demo:sli_availability:ratio_rate1h
           expr: |
-            sum(rate(demo_http_requests_total{status=~"2..|3.."}[1h]))
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[1h]))
+              or
+              vector(0)
+            )
             /
             sum(rate(demo_http_requests_total[1h]))
         - record: demo:sli_availability:ratio_rate30m
           expr: |
-            sum(rate(demo_http_requests_total{status=~"2..|3.."}[30m]))
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[30m]))
+              or
+              vector(0)
+            )
             /
             sum(rate(demo_http_requests_total[30m]))
         - record: demo:sli_availability:ratio_rate6h
           expr: |
-            sum(rate(demo_http_requests_total{status=~"2..|3.."}[6h]))
+            (
+              sum(rate(demo_http_requests_total{status=~"2..|3.."}[6h]))
+              or
+              vector(0)
+            )
             /
             sum(rate(demo_http_requests_total[6h]))
         - record: demo:error_budget_burn_rate5m
@@ -511,7 +527,10 @@ spec:
             summary: "demo 可用性慢速燃烧（30m/6h）"
             description: "30m 和 6h 燃烧率都超过 6x；错误在持续消耗 7d 错误预算。"
         - alert: DemoNoTraffic
-          expr: sum(rate(demo_http_requests_total[5m])) == 0
+          expr: |
+            sum(rate(demo_http_requests_total[5m])) == 0
+            or
+            absent(sum(rate(demo_http_requests_total[5m])))
           for: 10m
           labels:
             severity: warning
@@ -520,9 +539,10 @@ spec:
           annotations:
             summary: "demo 没有请求"
             description: "5m 内没有 demo 请求，SLI 无数据；检查 demo-loadgen 和 ServiceMonitor。"
+
 ```
 
-- [ ] **Step 2: 应用并确认规则被 Prometheus 加载**
+- [x] **Step 2: 应用并确认规则被 Prometheus 加载**
 
 ```bash
 kubectl apply -f /root/alerting/demo-slo-rules.yaml
@@ -550,7 +570,7 @@ Expected:
 - `demo:sli_availability:ratio_rate5m` 约为 `1`。
 - `demo:error_budget_burn_rate5m` 约为 `0`。
 
-- [ ] **Step 3: 确认正常流量下没有 fast/slow burn 告警**
+- [x] **Step 3: 确认正常流量下没有 fast/slow burn 告警**
 
 ```bash
 kubectl exec -i -n demo deploy/log-demo -- python - <<'PY'
@@ -571,7 +591,7 @@ PY
 
 Expected: `[]`。
 
-- [ ] **Step 4: 验证停流量不会误报 fast/slow burn**
+- [x] **Step 4: 验证停流量不会误报 fast/slow burn**
 
 ```bash
 kubectl scale deployment/demo-loadgen -n demo --replicas=0
@@ -595,7 +615,9 @@ kubectl scale deployment/demo-loadgen -n demo --replicas=1
 
 Expected: 仍然是 `[]`。没有流量时 SLI 是无数据，不应被当成 100% 错误；`DemoNoTraffic` 会在 10 分钟后单独提示。
 
-- [ ] **Step 5: 提交**
+实际：6 分钟时 `DemoNoTraffic` 为 `pending`，因为 `for: 10m` 还没满足；fast/slow burn 为 `[]`。恢复 loadgen 后 60 秒，请求速率回到约 `0.5`，pending 消失。
+
+- [x] **Step 5: 提交**
 
 ```bash
 git add infra/alerting/demo-slo-rules.yaml
