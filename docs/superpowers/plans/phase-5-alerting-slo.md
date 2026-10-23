@@ -510,6 +510,7 @@ spec:
             severity: critical
             service: demo
             slo: availability
+            namespace: monitoring
           annotations:
             summary: "demo 可用性快速燃烧（5m/1h）"
             description: "5m 和 1h 燃烧率都超过 14.4x；检查 /error、demo 日志和 trace。"
@@ -523,6 +524,7 @@ spec:
             severity: warning
             service: demo
             slo: availability
+            namespace: monitoring
           annotations:
             summary: "demo 可用性慢速燃烧（30m/6h）"
             description: "30m 和 6h 燃烧率都超过 6x；错误在持续消耗 7d 错误预算。"
@@ -536,6 +538,7 @@ spec:
             severity: warning
             service: demo
             slo: availability
+            namespace: monitoring
           annotations:
             summary: "demo 没有请求"
             description: "5m 内没有 demo 请求，SLI 无数据；检查 demo-loadgen 和 ServiceMonitor。"
@@ -833,7 +836,11 @@ git commit -m "feat: add local alert webhook receiver"
   - 其他 → `/webhook/default`
   - critical 抑制同 `service`/`slo` 的 warning
 
-- [ ] **Step 1: 写 AlertmanagerConfig**
+> 匹配前提：`AlertmanagerConfig` 默认 `alertmanagerConfigMatcherStrategy: OnNamespace`，只处理带 `namespace: monitoring` 标签的告警。因此 Task 3 的告警规则和这里的合成测试都必须带 `namespace: monitoring`。
+>
+> 测试隔离：critical 会抑制同 `service`/`slo` 的 warning。为了让“分组”和“静默”测试不被前面的 `TestCritical` 抑制，每个测试使用不同的 `service`：`test-routing`、`test-group`、`test-inhibit`、`test-silence`。
+
+- [x] **Step 1: 写 AlertmanagerConfig**
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1alpha1
@@ -893,10 +900,15 @@ spec:
         - slo
 ```
 
-- [ ] **Step 2: 应用并等待 Operator 生成配置**
+- [x] **Step 2: 应用并等待 Operator 生成配置**
 
 ```bash
 kubectl get crd alertmanagerconfigs.monitoring.coreos.com
+kubectl get alertmanagerconfig -A
+
+kubectl get alertmanager -n monitoring kube-prometheus-stack-alertmanager \
+  -o jsonpath='{.spec.alertmanagerConfigSelector}{"\n"}{.spec.alertmanagerConfigNamespaceSelector}{"\n"}{.spec.alertmanagerConfigMatcherStrategy}{"\n"}'
+
 kubectl apply -f /root/alerting/alertmanager-config.yaml
 kubectl get alertmanagerconfig -n monitoring demo-alerting
 sleep 30
@@ -905,7 +917,7 @@ kubectl get alertmanager -n monitoring kube-prometheus-stack-alertmanager
 
 Expected: AlertmanagerConfig 存在；Alertmanager `RECONCILED=True`。
 
-- [ ] **Step 3: 检查生成后的 Alertmanager 配置**
+- [x] **Step 3: 检查生成后的 Alertmanager 配置**
 
 ```bash
 kubectl exec -n monitoring alertmanager-kube-prometheus-stack-alertmanager-0 -c alertmanager -- \
@@ -925,7 +937,7 @@ Expected: 能看到：
 kubectl logs -n monitoring deploy/kube-prometheus-stack-operator --tail=80
 ```
 
-- [ ] **Step 4: 测试 critical 路由**
+- [x] **Step 4: 测试 critical 路由**
 
 ```bash
 kubectl exec -i -n demo deploy/log-demo -- python - <<'PY'
@@ -937,8 +949,9 @@ alerts = [{
     "labels": {
         "alertname": "TestCritical",
         "severity": "critical",
-        "service": "demo",
-        "slo": "availability",
+        "service": "test-routing",
+        "slo": "test",
+        "namespace": "monitoring",
         "instance": "test-1",
     },
     "annotations": {"summary": "synthetic critical"},
@@ -958,7 +971,7 @@ kubectl logs -n monitoring deploy/alert-webhook --tail=10
 
 Expected: webhook 日志里出现 `"path": "/webhook/critical"`，payload 的 `alertname` 是 `TestCritical`。
 
-- [ ] **Step 5: 测试 warning 路由和分组**
+- [x] **Step 5: 测试 warning 路由和分组**
 
 ```bash
 kubectl exec -i -n demo deploy/log-demo -- python - <<'PY'
@@ -971,8 +984,9 @@ alerts = [
         "labels": {
             "alertname": "TestGroup",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-group",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-a",
         },
         "annotations": {"summary": "group test a"},
@@ -981,8 +995,9 @@ alerts = [
         "labels": {
             "alertname": "TestGroup",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-group",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-b",
         },
         "annotations": {"summary": "group test b"},
@@ -1006,7 +1021,7 @@ Expected:
 - 出现 `"path": "/webhook/warning"`。
 - 同一个 webhook payload 的 `alerts` 数组里有 2 条 `TestGroup`，因为 `instance` 不在 `groupBy` 里。
 
-- [ ] **Step 6: 测试抑制**
+- [x] **Step 6: 测试抑制**
 
 同时发 critical 和 warning，二者 `service`、`slo` 相同：
 
@@ -1021,8 +1036,9 @@ alerts = [
         "labels": {
             "alertname": "TestInhibitCritical",
             "severity": "critical",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-inhibit",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-1",
         },
         "annotations": {"summary": "inhibit source"},
@@ -1031,8 +1047,9 @@ alerts = [
         "labels": {
             "alertname": "TestInhibitWarning",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-inhibit",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-1",
         },
         "annotations": {"summary": "should be inhibited"},
@@ -1056,7 +1073,7 @@ Expected:
 - 看到 `TestInhibitCritical` 走 `/webhook/critical`。
 - 看不到 `TestInhibitWarning` 的 firing 通知；它被 critical 抑制。
 
-- [ ] **Step 7: 测试静默**
+- [x] **Step 7: 测试静默**
 
 先创建 10 分钟静默：
 
@@ -1099,8 +1116,9 @@ alerts = [{
     "labels": {
         "alertname": "TestSilence",
         "severity": "warning",
-        "service": "demo",
-        "slo": "availability",
+        "service": "test-silence",
+        "slo": "test",
+        "namespace": "monitoring",
         "instance": "test-1",
     },
     "annotations": {"summary": "should be silenced"},
@@ -1138,7 +1156,7 @@ PY
 
 Expected: `200`。
 
-- [ ] **Step 8: 清理合成告警**
+- [x] **Step 8: 清理合成告警**
 
 给合成告警发一个已过期的 `endsAt`，让它们进入 resolved：
 
@@ -1155,8 +1173,9 @@ alerts = [
         "labels": {
             "alertname": "TestCritical",
             "severity": "critical",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-routing",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-1",
         },
         "endsAt": past,
@@ -1165,8 +1184,9 @@ alerts = [
         "labels": {
             "alertname": "TestGroup",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-group",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-a",
         },
         "endsAt": past,
@@ -1175,8 +1195,9 @@ alerts = [
         "labels": {
             "alertname": "TestGroup",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-group",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-b",
         },
         "endsAt": past,
@@ -1185,8 +1206,9 @@ alerts = [
         "labels": {
             "alertname": "TestInhibitCritical",
             "severity": "critical",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-inhibit",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-1",
         },
         "endsAt": past,
@@ -1195,8 +1217,9 @@ alerts = [
         "labels": {
             "alertname": "TestInhibitWarning",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-inhibit",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-1",
         },
         "endsAt": past,
@@ -1205,8 +1228,9 @@ alerts = [
         "labels": {
             "alertname": "TestSilence",
             "severity": "warning",
-            "service": "demo",
-            "slo": "availability",
+            "service": "test-silence",
+            "slo": "test",
+            "namespace": "monitoring",
             "instance": "test-1",
         },
         "endsAt": past,
@@ -1222,7 +1246,7 @@ print(urllib.request.urlopen(req).status)
 PY
 ```
 
-- [ ] **Step 9: 真实故障注入，验证规则到通知**
+- [x] **Step 9: 真实故障注入，验证规则到通知**
 
 先确认正常流量下没有 fast burn，然后把 loadgen 切到 `/error`：
 
@@ -1282,7 +1306,9 @@ kubectl rollout status deployment/demo-loadgen -n demo --timeout=120s
 
 等待几分钟，确认告警 resolved，webhook 收到 `"status": "resolved"`。
 
-- [ ] **Step 10: 提交**
+实际：FastBurn 于 `13:22:09` resolved，webhook 收到 `/webhook/critical` 的 `"status": "resolved"`。但 `DemoAvailabilitySlowBurn` 于 `13:20:09` firing，因为 30m/6h 窗口仍保留故障期 500s；它需要接近 6 小时才能自然稀释。本实验没有等待 SlowBurn resolved，记录为已知偏差，不通过改阈值或伪造状态来掩盖。
+
+- [x] **Step 10: 提交**
 
 ```bash
 git add infra/alerting/alertmanager-config.yaml

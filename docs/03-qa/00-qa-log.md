@@ -11,7 +11,7 @@
 |---|---|---|
 | 2026-10-21 | 阶段 0–2：k3s 基线、冒烟测试、LimitRange/Quota、kube-prometheus-stack、Grafana OOM | [2026-10-21.md](2026-10-21.md) |
 | 2026-10-22 | 阶段 3：Loki + Fluent Bit + Grafana 日志链路、level 查询、Python traceback 多行合并、验收记录与 `phase-3-logging-ready` 快照 | [2026-10-22.md](2026-10-22.md) |
-| 2026-10-23 | 阶段 4：Tempo 单机部署、本地 chart 绕过 GitHub 下载失败、OTel Collector 部署与 `otlp_grpc` 修正、QA 改为按天记录 | [2026-10-23.md](2026-10-23.md) |
+| 2026-10-23 | 阶段 4–5：Tempo/OTel 链路；SLI/SLO、燃烧率告警、Alertmanager 路由/分组/抑制/静默、本地 webhook；SlowBurn 长窗口偏差 | [2026-10-23.md](2026-10-23.md) |
 
 ## 记录模板
 
@@ -53,3 +53,5 @@
 
 - [仓库阅读顺序](../README.md)
 - [阶段 3 日志链路计划](../superpowers/plans/phase-3-logging-pipeline.md)
+- [阶段 4 链路追踪计划](../superpowers/plans/phase-4-tracing-pipeline.md)
+- [阶段 5 告警与 SLO 计划](../superpowers/plans/phase-5-alerting-slo.md)
