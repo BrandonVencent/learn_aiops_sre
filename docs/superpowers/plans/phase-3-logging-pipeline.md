@@ -625,7 +625,7 @@ Expected: 两个 chart 都输出 `1 chart(s) linted, 0 chart(s) failed`。
 ```bash
 git add infra/logging docs/02-lab/04-logging-values-explained.md \
   docs/03-qa/00-qa-log.md docs/03-qa/2026-10-22.md \
-  docs/README.md docs/superpowers/plans/2026-10-22-logging-pipeline.md
+  docs/README.md docs/superpowers/plans/phase-3-logging-pipeline.md
 git commit -m "feat: add phase 3 logging values and yaml explanations"
 ```
 

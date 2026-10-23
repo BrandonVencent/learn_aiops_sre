@@ -52,4 +52,4 @@
 ## 相关文档
 
 - [仓库阅读顺序](../README.md)
-- [阶段 3 日志链路计划](../superpowers/plans/2026-10-22-logging-pipeline.md)
+- [阶段 3 日志链路计划](../superpowers/plans/phase-3-logging-pipeline.md)
