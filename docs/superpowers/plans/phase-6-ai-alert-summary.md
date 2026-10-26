@@ -408,9 +408,18 @@ Expected: `sent True`；钉钉群收到卡片。
 
 ```bash
 kubectl -n aiops logs deploy/ai-summary --tail=100 | grep -Ei 'access_token|SEC|key=' && echo LEAK || echo CLEAN
+kubectl exec -i -n aiops deploy/ai-summary -- python - <<'PY'
+import app
+from prometheus_client import generate_latest
+app.send_dingtalk("AIOps 指标验证", "### 指标验证\n> 收到即成功")
+body = generate_latest().decode()
+print("\n".join(l for l in body.splitlines() if l.startswith("ai_summary_notify_total")))
+PY
 ```
 
-Expected: `CLEAN`。
+Expected: `CLEAN`，以及 `ai_summary_notify_total{channel="dingtalk",result="ok"} 1.0`。
+
+注意：`kubectl exec` 里的 `import app` 是新进程，它的计数不会出现在 uvicorn 进程的 `/metrics` 里，所以指标必须像上面这样在同一进程内用 `generate_latest()` 验证。
 
 - [ ] **Step 5: 记录并提交**
 

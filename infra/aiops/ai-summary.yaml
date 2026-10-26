@@ -10,6 +10,7 @@ data:
     import hmac
     import json
     import os
+    import re
     import threading
     import time
     import urllib.parse
@@ -35,6 +36,11 @@ data:
         "ai_summary_notify_total",
         "Notifications sent",
         ["channel", "result"],
+    )
+    EVIDENCE = Counter(
+        "ai_summary_evidence_total",
+        "Evidence items collected",
+        ["source"],
     )
     DEDUP_TTL_SECONDS = int(os.getenv("DEDUP_TTL_SECONDS", "600"))
     _DEDUP: dict[str, float] = {}
@@ -97,6 +103,15 @@ data:
                 for alert in alerts
             ],
         )
+        if payload.get("status") == "resolved":
+            return
+        evidence = collect_evidence(payload)
+        log_event(
+            "evidence",
+            alertname=evidence.get("alertname"),
+            items=evidence.get("items", []),
+            errors=evidence.get("errors", []),
+        )
 
 
     def sign_dingtalk(secret: str, timestamp_ms: int) -> str:
@@ -156,6 +171,301 @@ data:
 
         NOTIFY.labels(channel="dingtalk", result="fail").inc()
         return False
+
+
+    PROM_QUERIES = {
+        "M1": "demo:error_budget_burn_rate5m",
+        "M1h": "demo:error_budget_burn_rate1h",
+        "M30m": "demo:error_budget_burn_rate30m",
+        "M6h": "demo:error_budget_burn_rate6h",
+        "M2": "demo:sli_availability:ratio_rate5m",
+        "M3": (
+            'sum(rate(demo_http_requests_total{status=~"5.."}[5m]))'
+            ' / clamp_min(sum(rate(demo_http_requests_total[5m])), 0.001)'
+        ),
+        "M4": "sum(rate(demo_http_requests_total[5m]))",
+        "M5": (
+            "topk(3, sum by (path, status) "
+            '(rate(demo_http_requests_total{status=~"5.."}[5m])))'
+        ),
+        "M6": (
+            "histogram_quantile(0.95, sum(rate("
+            "demo_http_request_duration_seconds_bucket[5m])) by (le))"
+        ),
+        "M7": 'up{namespace="demo"}',
+    }
+    LOKI_ERROR_QUERY = '{namespace="demo"} | json | level="error"'
+    LOKI_COUNT_QUERY = (
+        'sum(count_over_time({namespace="demo"} | json | level="error" [5m]))'
+    )
+    TEMPO_TRACEQL = '{resource.service.name="log-demo" && status=error}'
+    REDACT_PATTERNS = [
+        (
+            re.compile(
+                r"(?i)(authorization|token|password|passwd|secret|api[_-]?key)"
+                r"\s*[:=]\s*\S+"
+            ),
+            r"\1=[REDACTED]",
+        ),
+        (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "[REDACTED_EMAIL]"),
+        (re.compile(r"\b1[3-9]\d{9}\b"), "[REDACTED_PHONE]"),
+        (re.compile(r"\b[0-9a-fA-F]{32,}\b"), "[REDACTED]"),
+    ]
+
+
+    def redact(text: str) -> str:
+        result = text
+        for pattern, replacement in REDACT_PATTERNS:
+            result = pattern.sub(replacement, result)
+
+        def replace_ip(match: re.Match) -> str:
+            value = match.group(0)
+            if value == "127.0.0.1":
+                return value
+            return "[REDACTED_IP]"
+
+        result = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", replace_ip, result)
+        return result
+
+
+    def query_prometheus(expr: str) -> list[dict]:
+        try:
+            response = httpx.get(
+                os.getenv("PROM_URL", "") + "/api/v1/query",
+                params={"query": expr},
+                timeout=3,
+            )
+            response.raise_for_status()
+            data = response.json().get("data", {})
+            if data.get("resultType") != "vector":
+                return []
+            return data.get("result", [])
+        except Exception as exc:
+            log_event(
+                "evidence_error",
+                source="prometheus",
+                query=expr,
+                error=type(exc).__name__,
+            )
+            return []
+
+
+    def query_loki(
+        query: str, start_ns: int, end_ns: int, limit: int = 20
+    ) -> list[str]:
+        try:
+            response = httpx.get(
+                os.getenv("LOKI_URL", "") + "/loki/api/v1/query_range",
+                params={
+                    "query": query,
+                    "start": start_ns,
+                    "end": end_ns,
+                    "limit": limit,
+                    "direction": "backward",
+                },
+                timeout=3,
+            )
+            response.raise_for_status()
+            streams = response.json().get("data", {}).get("result", [])
+            entries = []
+            for stream in streams:
+                for value in stream.get("values", []):
+                    entries.append((int(value[0]), value[1]))
+            entries.sort(key=lambda item: item[0], reverse=True)
+            return [redact(line)[:200] for _, line in entries[:limit]]
+        except Exception as exc:
+            log_event("evidence_error", source="loki", error=type(exc).__name__)
+            return []
+
+
+    def query_loki_count(now_s: float) -> float | None:
+        try:
+            response = httpx.get(
+                os.getenv("LOKI_URL", "") + "/loki/api/v1/query",
+                params={"query": LOKI_COUNT_QUERY, "time": int(now_s)},
+                timeout=3,
+            )
+            response.raise_for_status()
+            result = response.json().get("data", {}).get("result", [])
+            if not result:
+                return 0.0
+            return float(result[0]["value"][1])
+        except Exception as exc:
+            log_event("evidence_error", source="loki_count", error=type(exc).__name__)
+            return None
+
+
+    def search_tempo(start_s: int, end_s: int) -> list[dict]:
+        try:
+            response = httpx.get(
+                os.getenv("TEMPO_URL", "") + "/api/search",
+                params={
+                    "q": TEMPO_TRACEQL,
+                    "limit": 3,
+                    "start": start_s,
+                    "end": end_s,
+                },
+                timeout=3,
+            )
+            response.raise_for_status()
+            return response.json().get("traces", []) or []
+        except Exception as exc:
+            log_event("evidence_error", source="tempo", error=type(exc).__name__)
+            return []
+
+
+    def summarize_trace(trace_id: str) -> dict:
+        try:
+            response = httpx.get(
+                os.getenv("TEMPO_URL", "") + "/api/traces/" + trace_id,
+                timeout=3,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            log_event(
+                "evidence_error",
+                source="tempo_trace",
+                trace_id=trace_id,
+                error=type(exc).__name__,
+            )
+            return {}
+
+        spans = []
+        for batch in data.get("batches", []):
+            for scope in batch.get("scopeSpans", []):
+                spans.extend(scope.get("spans", []))
+
+        error_spans = 0
+        inventory_ms = None
+        for span in spans[:200]:
+            status = span.get("status") or {}
+            code = status.get("code")
+            if code in (2, "2", "STATUS_CODE_ERROR") or status.get("message"):
+                error_spans += 1
+            if span.get("name") == "inventory.call":
+                try:
+                    duration = (
+                        int(span.get("endTimeUnixNano", 0))
+                        - int(span.get("startTimeUnixNano", 0))
+                    ) / 1_000_000
+                except Exception:
+                    continue
+                inventory_ms = max(inventory_ms or 0.0, duration)
+
+        return {
+            "trace_id": trace_id,
+            "span_count": len(spans),
+            "error_spans": error_spans,
+            "inventory_call_ms": inventory_ms,
+        }
+
+
+    def collect_evidence(payload: dict) -> dict:
+        alert = (payload.get("alerts") or [{}])[0]
+        labels = alert.get("labels") or {}
+        alertname = labels.get("alertname", "")
+        now = time.time()
+        metrics: dict[str, Any] = {}
+        items: list[dict] = []
+        errors: list[dict] = []
+
+        for evidence_id, expr in PROM_QUERIES.items():
+            result = query_prometheus(expr)
+            if not result:
+                errors.append(
+                    {"source": "prometheus", "id": evidence_id, "error": "empty"}
+                )
+                continue
+            if evidence_id == "M5":
+                value: Any = [
+                    {
+                        "metric": row.get("metric", {}),
+                        "value": float(row["value"][1]),
+                    }
+                    for row in result
+                ]
+            elif evidence_id == "M7":
+                value = [
+                    {
+                        "pod": row.get("metric", {}).get("pod"),
+                        "up": row["value"][1],
+                    }
+                    for row in result
+                ]
+            else:
+                value = float(result[0]["value"][1])
+            metrics[evidence_id] = value
+            items.append(
+                {
+                    "id": evidence_id,
+                    "source": "prometheus",
+                    "query": expr,
+                    "value": value,
+                }
+            )
+
+        start_ns = int((now - 900) * 1_000_000_000)
+        end_ns = int(now * 1_000_000_000)
+        logs = query_loki(LOKI_ERROR_QUERY, start_ns, end_ns)
+        log_count = query_loki_count(now)
+        if log_count is not None:
+            metrics["L1_COUNT"] = log_count
+        if logs:
+            items.append(
+                {
+                    "id": "L1",
+                    "source": "loki",
+                    "query": LOKI_ERROR_QUERY,
+                    "value": {"count_5m": log_count, "lines": logs},
+                }
+            )
+
+        traces = search_tempo(int(now - 900), int(now))
+        summaries = []
+        for trace in traces[:2]:
+            trace_id = trace.get("traceID") or trace.get("traceId")
+            if not trace_id:
+                continue
+            summaries.append(summarize_trace(trace_id))
+        summaries = [summary for summary in summaries if summary]
+        if summaries:
+            metrics["T1"] = summaries
+            items.append(
+                {
+                    "id": "T1",
+                    "source": "tempo",
+                    "query": TEMPO_TRACEQL,
+                    "value": summaries,
+                }
+            )
+            inventory_values = [
+                summary.get("inventory_call_ms")
+                for summary in summaries
+                if summary.get("inventory_call_ms") is not None
+            ]
+            if inventory_values:
+                metrics["T2"] = max(inventory_values)
+                items.append(
+                    {
+                        "id": "T2",
+                        "source": "tempo",
+                        "query": "inventory.call span duration",
+                        "value": max(inventory_values),
+                    }
+                )
+
+        for source in {item["source"] for item in items}:
+            EVIDENCE.labels(source=source).inc()
+
+        return {
+            "alertname": alertname,
+            "items": items,
+            "metrics": metrics,
+            "logs": logs,
+            "traces": summaries,
+            "errors": errors,
+        }
 
 
     @app.get("/healthz")
