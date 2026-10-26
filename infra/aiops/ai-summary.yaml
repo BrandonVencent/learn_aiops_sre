@@ -1,0 +1,227 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-summary-app
+  namespace: aiops
+data:
+  app.py: |
+    import hashlib
+    import json
+    import os
+    import threading
+    import time
+    from typing import Any
+
+    from fastapi import BackgroundTasks, FastAPI, Request
+    from fastapi.responses import JSONResponse, Response
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+
+    app = FastAPI()
+
+    ALERTS_RECEIVED = Counter(
+        "ai_summary_alerts_received_total",
+        "Alerts accepted for processing",
+        ["severity"],
+    )
+    DEDUP_HITS = Counter(
+        "ai_summary_dedup_hits_total",
+        "Duplicate alerts skipped",
+    )
+    DEDUP_TTL_SECONDS = int(os.getenv("DEDUP_TTL_SECONDS", "600"))
+    _DEDUP: dict[str, float] = {}
+    _DEDUP_LOCK = threading.Lock()
+
+
+    def log_event(event: str, **fields: Any) -> None:
+        record = {
+            "event": event,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **fields,
+        }
+        print(json.dumps(record, ensure_ascii=False), flush=True)
+
+
+    def alert_names(payload: dict) -> list[str]:
+        names = {
+            (alert.get("labels") or {}).get("alertname", "")
+            for alert in payload.get("alerts", [])
+        }
+        return sorted(name for name in names if name)
+
+
+    def dedup_key(payload: dict) -> str:
+        base = "{}|{}".format(
+            payload.get("groupKey", ""),
+            ",".join(alert_names(payload)),
+        )
+        if payload.get("status") == "resolved":
+            return base + ":resolved"
+        return base
+
+
+    def is_duplicate(key: str) -> bool:
+        now = time.time()
+        with _DEDUP_LOCK:
+            for old_key, seen_at in list(_DEDUP.items()):
+                if now - seen_at > DEDUP_TTL_SECONDS:
+                    del _DEDUP[old_key]
+            if key in _DEDUP:
+                return True
+            _DEDUP[key] = now
+            return False
+
+
+    def process_alert(payload: dict) -> None:
+        alerts = payload.get("alerts", [])
+        log_event(
+            "alert_received",
+            status=payload.get("status"),
+            groupKey=payload.get("groupKey"),
+            alerts=[
+                {
+                    "labels": alert.get("labels"),
+                    "annotations": alert.get("annotations"),
+                    "startsAt": alert.get("startsAt"),
+                    "endsAt": alert.get("endsAt"),
+                }
+                for alert in alerts
+            ],
+        )
+
+
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"status": "ok"}
+
+
+    @app.get("/metrics")
+    def metrics() -> Response:
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+    @app.post("/webhook/alert")
+    async def webhook(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            log_event("bad_request", error=type(exc).__name__)
+            return JSONResponse(status_code=400, content={"status": "bad_request"})
+
+        alerts = payload.get("alerts") or []
+        if not alerts:
+            return JSONResponse(status_code=400, content={"status": "no_alerts"})
+
+        key = dedup_key(payload)
+        if is_duplicate(key):
+            DEDUP_HITS.inc()
+            log_event("alert_duplicate", key=key)
+            return JSONResponse(status_code=202, content={"status": "accepted"})
+
+        severity = (alerts[0].get("labels") or {}).get("severity", "unknown")
+        ALERTS_RECEIVED.labels(severity=severity).inc()
+        background_tasks.add_task(process_alert, payload)
+        return JSONResponse(status_code=202, content={"status": "accepted"})
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-summary
+  namespace: aiops
+  labels:
+    app: ai-summary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-summary
+  template:
+    metadata:
+      labels:
+        app: ai-summary
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              pip install --no-cache-dir --disable-pip-version-check \
+                -i https://pypi.tuna.tsinghua.edu.cn/simple \
+                fastapi==0.115.* \
+                uvicorn==0.32.* \
+                httpx==0.27.* \
+                pydantic==2.* \
+                prometheus-client==0.21.1
+              exec uvicorn app:app --host 0.0.0.0 --port 8080 --workers 1
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: ai-summary-secrets
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PROM_URL
+              value: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+            - name: LOKI_URL
+              value: http://loki.logging.svc.cluster.local:3100
+            - name: TEMPO_URL
+              value: http://tempo.tracing.svc.cluster.local:3200
+            - name: DEDUP_TTL_SECONDS
+              value: "600"
+            - name: LLM_ENABLED
+              value: "0"
+            - name: DINGTALK_ENABLED
+              value: "0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          configMap:
+            name: ai-summary-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-summary
+  namespace: aiops
+  labels:
+    app: ai-summary
+spec:
+  selector:
+    app: ai-summary
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
