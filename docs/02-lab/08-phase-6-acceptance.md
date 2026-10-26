@@ -47,7 +47,7 @@
 - [x] 日志中未出现 API key、钉钉 token、SEC
 - [x] `ai-summary` 内存 50Mi，低于 200Mi
 - [x] ServiceMonitor target `job=ai-summary` 为 `up=1`
-- [ ] 三台 VM 创建 `phase-6a-ai-summary-ready` 快照（创建后回填时间）
+- [x] 三台 VM 创建 `phase-6a-ai-summary-ready` 快照（2026-10-26 21:00:36 +08:00）
 
 ## 1. 目标与边界
 
@@ -370,7 +370,18 @@ kubectl -n demo rollout status deploy/demo-loadgen --timeout=180s
 phase-6a-ai-summary-ready
 ```
 
-创建时 `ai-summary` 内存 50Mi，SlowBurn 处于 active。创建时间和重启验证结果在创建后回填。
+创建时间：`2026-10-26 21:00:36 +08:00`（记录时的集群时间）。三台 VM（`k8s-server`、`k8s-worker-1`、`k8s-worker-2`）均已创建，用户确认。
+
+快照前状态：
+
+| 项 | 值 |
+|---|---|
+| 节点 | 三台 `Ready`，k3s `v1.36.5+k3s1` |
+| `ai-summary` | `Running`，0 次重启，内存 50Mi |
+| `demo-loadgen` | `1/1` |
+| `log-demo` | `1/1` |
+| `web` | `2/2` |
+| `DemoAvailabilitySlowBurn` | 仍 active（30m/6h 长窗口残留，预期） |
 
 ## 13. 结论
 
