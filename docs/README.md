@@ -20,7 +20,9 @@
 12. [阶段 4 tracing values 解释](02-lab/05-tracing-values-explained.md) —— Tempo values、Collector pipeline、OTel SDK 和关联查询
 13. [阶段 5 告警与 SLO 验收记录](02-lab/06-phase-5-acceptance.md) —— SLI/SLO、燃烧率、Alertmanager 路由、分组、抑制、静默和 webhook
 14. [阶段 5 告警与 SLO 解释](02-lab/07-alerting-values-explained.md) —— 指标、PromQL、PrometheusRule、AlertmanagerConfig 和 webhook
-15. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
+15. [阶段 6 AI 告警摘要验收记录](02-lab/08-phase-6-acceptance.md) —— 202 后台处理、证据采集、置信度、钉钉卡片和 6a 真实故障
+16. [阶段 6 AI 告警摘要解释](02-lab/09-ai-summary-explained.md) —— 证据 ID、PromQL/LogQL、Tempo 裁剪、证据校验、脱敏、加签和去重
+17. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
 
 ## 学习路线
 
@@ -31,7 +33,7 @@
 | M3 | 日志链路 | Fluent Bit → Loki → Grafana | 能追一条日志从 stdout 到查询结果 |
 | M4 | 链路追踪 | OTel Collector + Tempo + demo 服务 | 已完成，见[阶段 4 验收记录](02-lab/04-phase-4-acceptance.md) |
 | M5 | 告警与 SLO | Alertmanager + SLO 规则 + 通知 | 已完成，见[阶段 5 验收记录](02-lab/06-phase-5-acceptance.md) |
-| M6 | AI 告警摘要 | Webhook 服务 + 上下文聚合 + LLM | 输出带证据的故障摘要，而不是空泛结论 |
+| M6 | AI 告警摘要 | Webhook 服务 + 上下文聚合 + LLM | 6a 已完成，6b 进行中；见[验收记录](02-lab/08-phase-6-acceptance.md)和[解释](02-lab/09-ai-summary-explained.md) |
 | M7 | 受控运维 | 只读 Agent → 审批 → 低风险动作 | 能说清楚权限、审计、回滚怎么设计 |
 | M8 | 故障演练 | 注入故障 + 复盘 | 能写出一份像样的 postmortem |
 

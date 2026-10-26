@@ -164,12 +164,16 @@ k3s 不是「玩具」，它的 API、调度器、kubelet、CNI、RBAC 与标准
 
 ### 阶段 6：AI 告警摘要
 
-- FastAPI 接收 Alertmanager webhook。
-- 查询 Prometheus 和 Loki，组装上下文。
-- 裁剪、脱敏、控制 token。
-- 调用 LLM，输出结构化 JSON：摘要、证据、候选原因、建议。
+> 状态：6a（`/error` 500）已验收，6b（下游超时）进行中。见 [阶段 6 AI 告警摘要验收记录](08-phase-6-acceptance.md) 和 [阶段 6 AI 告警摘要解释](09-ai-summary-explained.md)。
 
-**验收**：注入故障后，输出至少两条能对上真实查询的证据。
+- FastAPI 接收 Alertmanager webhook，`202` 后后台处理。
+- 查询 Prometheus、Loki 和 Tempo，按 evidence ID 组装上下文。
+- 裁剪、脱敏、过滤不可信 annotation 和日志指令。
+- 调用 DeepSeek，输出结构化 JSON；服务端校验证据 ID，失败则规则降级。
+- 置信度按证据源覆盖计算，优先级由确定性规则给出。
+- 钉钉群机器人加签推送卡片；邮件兜底保留但未启用。
+
+**验收**：注入故障后，卡片至少两条证据能对上真实 PromQL/LogQL；根因不出现无证据组件；模型关闭时仍能发出降级卡片。
 
 ### 阶段 7：受控运维
 
