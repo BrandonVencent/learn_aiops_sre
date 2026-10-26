@@ -57,3 +57,4 @@
 - [阶段 4 链路追踪计划](../superpowers/plans/phase-4-tracing-pipeline.md)
 - [阶段 5 告警与 SLO 计划](../superpowers/plans/phase-5-alerting-slo.md)
 - [阶段 6 AI 告警摘要设计](../superpowers/specs/phase-6-ai-alert-summary-design.md)
+- [阶段 6 AI 告警摘要计划](../superpowers/plans/phase-6-ai-alert-summary.md)
