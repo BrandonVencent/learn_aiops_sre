@@ -16,6 +16,12 @@ spec:
     groupInterval: 30s
     repeatInterval: 1h
     routes:
+      - receiver: ai-summary
+        matchers:
+          - name: alertname
+            value: "DemoAvailabilityFastBurn|DemoAvailabilitySlowBurn|DemoNoTraffic"
+            matchType: "=~"
+        continue: true
       - receiver: webhook-critical
         matchers:
           - name: severity
@@ -40,6 +46,10 @@ spec:
     - name: webhook-warning
       webhookConfigs:
         - url: http://alert-webhook.monitoring.svc.cluster.local:8080/webhook/warning
+          sendResolved: true
+    - name: ai-summary
+      webhookConfigs:
+        - url: http://ai-summary.aiops.svc.cluster.local:8080/webhook/alert
           sendResolved: true
   inhibitRules:
     - sourceMatch:

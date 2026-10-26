@@ -70,7 +70,7 @@ spec:
             namespace: monitoring
           annotations:
             summary: "demo 可用性快速燃烧（5m/1h）"
-            description: "5m 和 1h 燃烧率都超过 14.4x；检查 /error、demo 日志和 trace。"
+            description: "检查 demo 的错误路径、日志和 trace，确认错误率、延迟和下游依赖。"
         - alert: DemoAvailabilitySlowBurn
           expr: |
             demo:error_budget_burn_rate30m > 6
@@ -84,7 +84,7 @@ spec:
             namespace: monitoring
           annotations:
             summary: "demo 可用性慢速燃烧（30m/6h）"
-            description: "30m 和 6h 燃烧率都超过 6x；错误在持续消耗 7d 错误预算。"
+            description: "检查 demo 的错误路径、日志和 trace，确认错误率、延迟和下游依赖。"
         - alert: DemoNoTraffic
           expr: |
             sum(rate(demo_http_requests_total[5m])) == 0
