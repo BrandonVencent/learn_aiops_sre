@@ -504,7 +504,8 @@ PROM_QUERIES = {
 
 同时实现 `redact(text: str) -> str`，对日志行和 annotation 应用：
 
-- 键值型凭证：`(?i)(authorization|token|password|passwd|secret|api[_-]?key)\s*[:=]\s*\S+` → `[REDACTED]`
+- 键值型凭证：`authorization`（连 `Bearer`/`Basic` 前缀一起吃掉）、`token`、`password`、`passwd`、`secret`、`api[_-]?key` → `[REDACTED]`
+- 独立的 `Bearer <token>` 和 `sk-...` API key → `[REDACTED]`
 - IPv4（保留 `127.0.0.1`）
 - 邮箱、手机号
 - 长度 ≥ 32 的 hex/base64 串

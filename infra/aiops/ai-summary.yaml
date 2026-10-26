@@ -202,11 +202,23 @@ data:
     REDACT_PATTERNS = [
         (
             re.compile(
-                r"(?i)(authorization|token|password|passwd|secret|api[_-]?key)"
-                r"\s*[:=]\s*\S+"
+                r"(?i)\b(authorization)\b\s*[:=]\s*"
+                r"(?:bearer\s+|basic\s+)?[^\s,;]+"
             ),
             r"\1=[REDACTED]",
         ),
+        (
+            re.compile(
+                r"(?i)(token|password|passwd|secret|api[_-]?key)\b"
+                r"\s*[:=]\s*[^\s,;]+"
+            ),
+            r"\1=[REDACTED]",
+        ),
+        (
+            re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+            "Bearer [REDACTED]",
+        ),
+        (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"), "[REDACTED]"),
         (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "[REDACTED_EMAIL]"),
         (re.compile(r"\b1[3-9]\d{9}\b"), "[REDACTED_PHONE]"),
         (re.compile(r"\b[0-9a-fA-F]{32,}\b"), "[REDACTED]"),
