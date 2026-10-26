@@ -470,13 +470,13 @@ PROM_QUERIES = {
 
 `query_loki`：`GET {LOKI_URL}/loki/api/v1/query_range`，参数 `query`、`start`、`end`、`limit`、`direction=backward`；返回每条日志的 `line`，最多 20 行。
 
-查询：
+查询（Fluent Bit 外层包了 `{"_p":"F","log":"..."}`，必须二次解包）：
 
 ```logql
-{namespace="demo"} | json | level="error"
+{namespace="demo"} | json | line_format "{{.log}}" | json | level="error"
 ```
 
-另外用 `/loki/api/v1/query` 执行 `sum(count_over_time({namespace="demo"} | json | level="error" [5m]))` 得到 `L1_COUNT`。
+另外用 `/loki/api/v1/query` 执行 `sum(count_over_time({namespace="demo"} | json | line_format "{{.log}}" | json | level="error" [5m]))` 得到 `L1_COUNT`；`time` 参数用纳秒。
 
 - [ ] **Step 3: 实现 Tempo 查询**
 
