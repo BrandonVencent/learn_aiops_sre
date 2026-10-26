@@ -5,13 +5,17 @@ metadata:
   namespace: aiops
 data:
   app.py: |
+    import base64
     import hashlib
+    import hmac
     import json
     import os
     import threading
     import time
+    import urllib.parse
     from typing import Any
 
+    import httpx
     from fastapi import BackgroundTasks, FastAPI, Request
     from fastapi.responses import JSONResponse, Response
     from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
@@ -27,9 +31,15 @@ data:
         "ai_summary_dedup_hits_total",
         "Duplicate alerts skipped",
     )
+    NOTIFY = Counter(
+        "ai_summary_notify_total",
+        "Notifications sent",
+        ["channel", "result"],
+    )
     DEDUP_TTL_SECONDS = int(os.getenv("DEDUP_TTL_SECONDS", "600"))
     _DEDUP: dict[str, float] = {}
     _DEDUP_LOCK = threading.Lock()
+    _DINGTALK_SENT: list[float] = []
 
 
     def log_event(event: str, **fields: Any) -> None:
@@ -87,6 +97,65 @@ data:
                 for alert in alerts
             ],
         )
+
+
+    def sign_dingtalk(secret: str, timestamp_ms: int) -> str:
+        raw = "{}\n{}".format(timestamp_ms, secret).encode()
+        digest = hmac.new(secret.encode(), raw, hashlib.sha256).digest()
+        return urllib.parse.quote(base64.b64encode(digest).decode(), safe="")
+
+
+    def send_dingtalk(title: str, text: str) -> bool:
+        if os.getenv("DINGTALK_ENABLED", "0") != "1":
+            log_event("dingtalk_skipped")
+            return False
+
+        webhook = os.getenv("DINGTALK_WEBHOOK", "")
+        secret = os.getenv("DINGTALK_SECRET", "")
+        if not webhook or not secret:
+            NOTIFY.labels(channel="dingtalk", result="fail").inc()
+            log_event("dingtalk_missing_config")
+            return False
+
+        text = text[:3500]
+        now = time.time()
+        _DINGTALK_SENT[:] = [
+            sent_at for sent_at in _DINGTALK_SENT if now - sent_at < 60
+        ]
+        if len(_DINGTALK_SENT) >= 10:
+            text = "### 多条告警汇总\n> 1 分钟内超过 10 条，已合并。\n\n最后一条：" + title
+
+        timestamp_ms = int(now * 1000)
+        sign = sign_dingtalk(secret, timestamp_ms)
+        separator = "&" if "?" in webhook else "?"
+        url = "{}{}timestamp={}&sign={}".format(
+            webhook, separator, timestamp_ms, sign
+        )
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {"title": title, "text": text},
+        }
+
+        for attempt in range(2):
+            try:
+                response = httpx.post(url, json=payload, timeout=5)
+                body = response.json()
+                if body.get("errcode") == 0:
+                    _DINGTALK_SENT.append(now)
+                    NOTIFY.labels(channel="dingtalk", result="ok").inc()
+                    log_event("dingtalk_sent", title=title, status=response.status_code)
+                    return True
+                log_event(
+                    "dingtalk_error",
+                    errcode=body.get("errcode"),
+                    errmsg=body.get("errmsg"),
+                )
+            except Exception as exc:
+                log_event("dingtalk_exception", error=type(exc).__name__)
+            time.sleep(2)
+
+        NOTIFY.labels(channel="dingtalk", result="fail").inc()
+        return False
 
 
     @app.get("/healthz")
@@ -177,7 +246,7 @@ spec:
             - name: LLM_ENABLED
               value: "0"
             - name: DINGTALK_ENABLED
-              value: "0"
+              value: "1"
           resources:
             requests:
               cpu: 100m
