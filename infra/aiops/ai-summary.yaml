@@ -1059,9 +1059,10 @@ data:
         for row in (metrics.get("M5") or [])[:2]:
             row_metric = row.get("metric") or {}
             path = str(row_metric.get("path", "?")).replace("`", "")
+            status = str(row_metric.get("status", "?")).replace("`", "")
             lines.append(
-                "- M5 错误路径：`{}` {:.3g} req/s".format(
-                    path, _as_float(row.get("value"))
+                "- M5 错误路径：{}（{}） {:.3g} req/s".format(
+                    path, status, _as_float(row.get("value"))
                 )
             )
         log_count = _as_float(metrics.get("L1_COUNT"))
@@ -1073,7 +1074,7 @@ data:
             lines.append(line)
         for summary in (evidence.get("traces") or [])[:1]:
             lines.append(
-                "- T1 trace `{}`：{} 个错误 span".format(
+                "- T1 trace {}：{} 个错误 span".format(
                     summary.get("trace_id", "?"),
                     int(_as_float(summary.get("error_spans"))),
                 )
@@ -1304,7 +1305,7 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5
-            failureThreshold: 30
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /healthz

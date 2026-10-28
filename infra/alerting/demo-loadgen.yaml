@@ -26,7 +26,7 @@ spec:
             - -c
             - |
               while true; do
-                wget -q -T 2 -O /dev/null \
+                wget -q -T 5 -O /dev/null \
                   "http://log-demo.demo.svc.cluster.local:8080${TARGET_PATH}" || true
                 sleep "${INTERVAL_SECONDS}"
               done
