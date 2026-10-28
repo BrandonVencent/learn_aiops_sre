@@ -9,9 +9,11 @@ data:
     import json
     import logging
     import os
+    import socket
     import sys
     import time
     import traceback
+    import urllib.request
     from datetime import datetime, timezone
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from urllib.parse import urlparse
@@ -78,21 +80,20 @@ data:
             format(span_context.span_id, "016x"),
         )
 
-    def emit(level, message):
+    def emit(level, message, **fields):
         trace_id, span_id = current_ids()
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "service": SERVICE_NAME,
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "message": message,
+        }
+        record.update(fields)
         logging.log(
             getattr(logging, level.upper()),
-            json.dumps(
-                {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "level": level,
-                    "service": SERVICE_NAME,
-                    "trace_id": trace_id,
-                    "span_id": span_id,
-                    "message": message,
-                },
-                ensure_ascii=False,
-            ),
+            json.dumps(record, ensure_ascii=False),
         )
 
     class Handler(BaseHTTPRequestHandler):
@@ -121,7 +122,7 @@ data:
 
             start = time.perf_counter()
             status = 500
-            metric_path = path if path in ("/", "/error") else "other"
+            metric_path = path if path in ("/", "/error", "/checkout") else "other"
 
             try:
                 carrier = {key.lower(): value for key, value in self.headers.items()}
@@ -153,6 +154,67 @@ data:
                         status = 500
                         self._send(500, "error\n")
                         span.set_attribute("http.response.status_code", 500)
+                        return
+
+                    if path == "/checkout":
+                        downstream_started = time.perf_counter()
+                        with tracer.start_as_current_span("inventory.call") as child:
+                            try:
+                                req = urllib.request.Request(
+                                    "http://inventory.demo.svc.cluster.local:8080/item"
+                                )
+                                with urllib.request.urlopen(req, timeout=2) as resp:
+                                    elapsed_ms = round(
+                                        (
+                                            time.perf_counter()
+                                            - downstream_started
+                                        )
+                                        * 1000,
+                                        3,
+                                    )
+                                    child.set_attribute(
+                                        "downstream.status", resp.status
+                                    )
+                                    child.set_attribute(
+                                        "downstream.duration_ms", elapsed_ms
+                                    )
+                                    status = 200
+                                    self._send(200, "ok\n")
+                            except Exception as exc:
+                                elapsed_ms = round(
+                                    (time.perf_counter() - downstream_started)
+                                    * 1000,
+                                    3,
+                                )
+                                timed_out = isinstance(
+                                    exc, (TimeoutError, socket.timeout)
+                                ) or "timed out" in str(exc).lower()
+                                message = (
+                                    "downstream timeout"
+                                    if timed_out
+                                    else "downstream error"
+                                )
+                                child.set_attribute("downstream.status", "error")
+                                child.set_attribute(
+                                    "downstream.duration_ms", elapsed_ms
+                                )
+                                child.record_exception(exc)
+                                child.set_status(
+                                    Status(StatusCode.ERROR, message)
+                                )
+                                span.set_status(
+                                    Status(StatusCode.ERROR, message)
+                                )
+                                emit(
+                                    "error",
+                                    message,
+                                    downstream="inventory",
+                                    downstream_error=type(exc).__name__,
+                                )
+                                status = 504
+                                self._send(504, message + "\n")
+
+                        span.set_attribute("http.response.status_code", status)
                         return
 
                     with tracer.start_as_current_span("demo.hello"):
