@@ -127,9 +127,9 @@
 | ID | 来源 | 内容 |
 |---|---|---|
 | M1 / M1h / M30m / M6h | Prometheus | 各窗口错误预算燃烧率 |
-| M2 | Prometheus | 请求速率 |
+| M2 | Prometheus | 5 分钟可用性比例 |
 | M3 | Prometheus | 5xx 比例 |
-| M4 | Prometheus | 错误预算剩余 |
+| M4 | Prometheus | 请求速率（判断无流量） |
 | M5 | Prometheus | 错误路径 + 状态码 + 速率 |
 | M6 | Prometheus | P95 延迟 |
 | M7 | Prometheus | target `up` 与 Pod 名 |
