@@ -22,7 +22,8 @@
 14. [阶段 5 告警与 SLO 解释](02-lab/07-alerting-values-explained.md) —— 指标、PromQL、PrometheusRule、AlertmanagerConfig 和 webhook
 15. [阶段 6 AI 告警摘要验收记录](02-lab/08-phase-6-acceptance.md) —— 202 后台处理、证据采集、置信度、钉钉卡片和 6a 真实故障
 16. [阶段 6 AI 告警摘要解释](02-lab/09-ai-summary-explained.md) —— 证据 ID、PromQL/LogQL、Tempo 裁剪、证据校验、脱敏、加签和去重
-17. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
+17. [阶段 0–6 已实现能力总览](02-lab/10-implemented-capabilities.md) —— 当前能跑什么、验证到什么程度、还缺什么
+18. [学习问答记录（按日期）](03-qa/00-qa-log.md) —— 每天一页，记录真实问题、结论和可复现命令
 
 ## 学习路线
 
