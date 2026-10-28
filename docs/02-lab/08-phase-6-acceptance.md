@@ -1,6 +1,6 @@
 # 阶段 6 AI 告警摘要验收记录
 
-> 状态：6a（现有 `/error` 500 场景）验收通过；6b（下游超时场景）见文末，完成前本节只记录 6a。
+> 状态：6a（现有 `/error` 500 场景）和 6b（下游超时场景）均验收通过；三台 VM 已创建 `phase-6a-ai-summary-ready` 和 `phase-6-ai-summary-ready` 快照。
 > 设计见 [阶段 6 AI 告警摘要设计](../superpowers/specs/phase-6-ai-alert-summary-design.md)，执行计划见 [阶段 6 AI 告警摘要计划](../superpowers/plans/phase-6-ai-alert-summary.md)。
 > 本记录只写配置、命令和验证结果，不记录 DeepSeek API key、钉钉 webhook、加签 SEC 或任何密码。
 
@@ -26,6 +26,10 @@
 | 路由配置 | [`infra/alerting/alertmanager-config.yaml`](../../infra/alerting/alertmanager-config.yaml) |
 | Secret | `aiops/ai-summary-secrets`，键为 `DEEPSEEK_API_KEY`、`DINGTALK_WEBHOOK`、`DINGTALK_SECRET`（不记录值） |
 | ai-summary 资源 | request `100m / 128Mi`，limit `500m / 384Mi`，单副本 |
+| inventory 清单 | [`infra/aiops/inventory-service.yaml`](../../infra/aiops/inventory-service.yaml) |
+| inventory 资源 | request `50m / 64Mi`，limit `200m / 128Mi`，单副本 |
+| loadgen 清单 | [`infra/alerting/demo-loadgen.yaml`](../../infra/alerting/demo-loadgen.yaml) |
+| demo 清单 | [`infra/tracing/demo-service-otel.yaml`](../../infra/tracing/demo-service-otel.yaml) |
 | 通知渠道 | 钉钉群机器人（加签），邮件兜底未启用 |
 
 ## 验收清单
@@ -48,12 +52,26 @@
 - [x] `ai-summary` 内存 50Mi，低于 200Mi
 - [x] ServiceMonitor target `job=ai-summary` 为 `up=1`
 - [x] 三台 VM 创建 `phase-6a-ai-summary-ready` 快照（2026-10-26 21:00:36 +08:00）
+- [x] `inventory` 服务正常，`/item` 返回 `{"item":"ok"}`
+- [x] demo `/checkout` 正常返回 `ok`，指标出现 `path="/checkout"`
+- [x] 6b 注入 `DELAY_MS=5000` 后 `/checkout` 返回 504，P95 超过 2 秒
+- [x] 6b 卡片 P1 / 100%，根因指向 inventory 下游超时
+- [x] 6b 证据含 `M6`、`L1`、`T1`、`T2`
+- [x] 6a 卡片不含 `inventory`，6b 卡片与 6a 正文可区分
+- [x] 6b 恢复后 FastBurn resolved，钉钉收到恢复卡片
+- [x] `inventory` 内存低于 80Mi
+- [x] 三台 VM 创建 `phase-6-ai-summary-ready` 快照（2026-10-28）
 
 ## 1. 目标与边界
 
-阶段 6a 要回答的问题是：
+阶段 6 要回答的问题是：
 
 > 当一条 SLO 告警真的响起时，服务能不能在几十秒内给出“发生了什么、证据是什么、先查哪里”，而不是复述告警标题？
+
+两个场景：
+
+- 6a：现有 `/error` 路径立即返回 500，验证“错得快”的故障；
+- 6b：`/checkout` 调用 `inventory` 超时，验证“慢到超时”的故障，以及同一套采集能否给出不同根因。
 
 边界：
 
@@ -83,6 +101,20 @@ PrometheusRule/demo-slo
        +-- severity=warning  --> alert-webhook /webhook/warning
 ```
 
+6b 额外增加一段请求链路：
+
+```text
+loadgen
+  |
+  | GET /checkout
+  v
+log-demo
+  |
+  | GET /item，客户端超时 2s
+  v
+inventory.demo:8080
+```
+
 关键点：
 
 - `continue: true` 让同一个告警既走原来的本地 webhook，也走 AI 摘要。
@@ -98,6 +130,11 @@ Service/ai-summary              -> 8080
 ServiceMonitor/ai-summary       -> Prometheus 抓取 /metrics
 Secret/ai-summary-secrets       -> 三个凭证
 AlertmanagerConfig/demo-alerting -> ai-summary receiver + continue 路由
+
+inventory-service.yaml:
+ConfigMap/inventory-app         -> server.py
+Deployment/inventory            -> 单副本标准库 HTTP 服务
+Service/inventory               -> 8080
 ```
 
 ## 3. 证据 ID
@@ -261,7 +298,122 @@ forbidden = []
 
 即没有 `inventory`、`数据库`、`database`、`redis`、`mysql`。
 
-## 8. 去重、延迟和资源
+## 8. 6b 下游超时
+
+### 8.1 场景
+
+6b 在 demo 和 inventory 之间加入一条真实调用链：
+
+```text
+loadgen -> GET /checkout -> demo -> GET /item (timeout 2s) -> inventory (sleep 5s)
+```
+
+inventory 由 `DELAY_MS=5000` 模拟下游变慢；demo 的客户端超时是 2 秒，所以：
+
+- demo 在 2 秒时放弃等待；
+- `/checkout` 返回 504；
+- 日志写 `downstream timeout`；
+- `inventory.call` span 被标记为 ERROR，时长约 2 秒；
+- inventory 自己仍然把 5 秒的请求处理完，日志里是 `elapsed_ms≈5000`。
+
+这也是为什么卡片里 `T2=2013ms`，而不是 `5000ms`：T2 记录的是**调用方实际等待时长**，不是下游总处理时长。
+
+### 8.2 注入与时间线
+
+基线（`15:00:03 +08`）：
+
+```text
+burn5m=0  P95=0.00475s  请求速率=0.498 req/s  无 Demo* active
+```
+
+注入：
+
+```bash
+kubectl -n demo set env deploy/demo-loadgen TARGET_PATH=/checkout
+kubectl -n demo rollout status deploy/demo-loadgen --timeout=180s
+kubectl -n demo set env deploy/inventory DELAY_MS=5000
+kubectl -n demo rollout status deploy/inventory --timeout=180s
+```
+
+实际注入时间 `15:00:51`。
+
+| 时间（+08） | 事件 |
+|---|---|
+| 15:00:51 | 切 `/checkout` 并注入 5 秒延迟 |
+| 15:11:09 | FastBurn `startsAt` |
+| 15:11:19 | ai-summary 收到告警 |
+| 15:11:20 | 置信度 `matched=3 / 100% / timeout=true` |
+| 15:11:24 | 钉钉 P1 卡片 |
+| 15:11:32 | 轮询看到 FastBurn active |
+| 15:22:49 | 收到 resolved |
+| 15:22:50 | 钉钉恢复卡片 |
+| 15:22:52 | SlowBurn P2 卡片（长窗口残留） |
+
+### 8.3 证据
+
+服务端日志：
+
+```text
+matched=3  confidence=100  timeout=true
+M1=100.0  M30m=21.41154156691881  M4=0.24912280701754383
+M6=2.425  L1_COUNT=75.0
+M5=[{'path': '/checkout', 'status': '504', 'value': 0.24912280701754383}]
+T2=2013.363098
+cited=['M3', 'M5', 'L1', 'T1', 'T2']
+```
+
+| 证据 | 6b 值 | 说明 |
+|---|---|---|
+| M1 | 100.0 | 5m 燃烧率 100x |
+| M3 | 1.0 | 5xx 比例 100% |
+| M5 | `/checkout` + `504` + 0.249 req/s | 错误路径已切换 |
+| M6 | 2.425s | P95 超过 2 秒 |
+| T2 | 2013ms | 调用方 2 秒超时 |
+| L1 | 75 行 / 5m | `downstream timeout` |
+| T1 | 2 个错误 span | `/checkout` 和 `inventory.call` |
+
+根因原文：
+
+```text
+log-demo 调用下游 inventory 超时（trace 中 inventory 调用约 2013ms），
+导致 /checkout 返回 504、错误率 100%，触发可用性快速燃烧。
+```
+
+建议：
+
+```text
+1. 检查 inventory 服务健康、延迟与超时配置
+2. 核对 log-demo 到 inventory 的网络与连接池状态
+3. 必要时对 /checkout 降级或限流以止血
+```
+
+未知项明确写出“inventory 侧具体故障原因（无其指标/日志）”，没有把超时进一步编造成网络、过载或依赖故障。
+
+### 8.4 6a / 6b 对比
+
+| 项 | 6a | 6b |
+|---|---|---|
+| 故障 | `/error` 立即 500 | `/checkout` 调下游超时 |
+| M5 路径/状态 | `/error` + `500` | `/checkout` + `504` |
+| M6 P95 | `0.00475s` | `2.425s` |
+| T2 inventory.call | 无 | `2013ms` |
+| 日志 | `demo error for Loki` | `downstream timeout` |
+| 根因 | `/error` 100% 500，触发原因证据不足 | inventory 超时导致 504 |
+| 证据 | `M3/M5/M2/L1/T1` | `M3/M5/L1/T1/T2` |
+| 标题 | P1 / 100% | P1 / 100% |
+
+标题相同是因为两次都是 `DemoAvailabilityFastBurn`；正文的路径、P95、T2、根因和建议不同，满足“可区分”要求。
+
+### 8.5 发现的问题与修复
+
+1. **BrokenPipeError**：loadgen 的 `wget -T 2` 和 demo 的 2 秒下游超时同时到期，客户端先断开，demo 写 504 时触发 `BrokenPipeError`。指标和 `downstream timeout` 日志在断开前已写入，证据有效，但 traceback 淹没了日志。
+   - 修复：`demo-loadgen.yaml` 改为 `wget -T 5`，客户端能正常收到 504。
+2. **钉钉重复渲染反引号内容**：M5 路径和 T1 trace ID 放在反引号里，钉钉渲染后显示成两份。
+   - 修复：`format_evidence_lines` 去掉反引号，M5 改为 `路径（状态码）`。Pod 内验证 `backticks: 0`。
+3. **startupProbe 150 秒不够**：`pip install` 从清华源安装超过 150 秒，Pod 被 kubelet 重启 2 次。
+   - 修复：`failureThreshold` 从 30 提到 60（300 秒）。新 Pod `RESTARTS=0`。
+
+## 9. 去重、延迟和资源
 
 | 项 | 结果 |
 |---|---|
@@ -269,7 +421,8 @@ forbidden = []
 | 去重 | Task 2 合成告警重复投递 2 次，命中 `alert_duplicate`，未重复发送 |
 | 真实 6a 投递 | 本轮只产生 1 条 `alert_received` |
 | 最近 300 行 `alert_duplicate` | 0 |
-| `ai-summary` 内存 | 50Mi |
+| `ai-summary` 内存 | 39Mi（最终检查；6a 时为 50Mi） |
+| `inventory` 内存 | 14Mi |
 | ServiceMonitor | `up{job="ai-summary"}=1` |
 
 去重 key：
@@ -281,9 +434,9 @@ resolved 追加 ":resolved"
 
 默认 TTL 600 秒。
 
-## 9. 降级与注入防护
+## 10. 降级与注入防护
 
-### 9.1 模型不可用
+### 10.1 模型不可用
 
 `LLM_ENABLED=0` 或调用失败时：
 
@@ -295,7 +448,7 @@ root_cause: 证据不足，需人工判断（模型未参与）
 
 规则模板仍会输出摘要、错误率、错误路径、错误日志和建议操作，钉钉照常收到卡片。
 
-### 9.2 提示词注入
+### 10.2 提示词注入
 
 告警 annotation 先过注入正则，命中则替换为 `[FILTERED_UNTRUSTED_INSTRUCTION]`，并记录：
 
@@ -305,7 +458,7 @@ annotation_filtered keys=["description"]
 
 模型系统提示词明确要求忽略 `<untrusted_logs>` 内的指令，annotation 只是人类假设，不是证据。
 
-### 9.3 脱敏
+### 10.3 脱敏
 
 进入日志、提示词和卡片前统一处理：
 
@@ -317,7 +470,7 @@ annotation_filtered keys=["description"]
 
 实测 `Authorization: Bearer sk-abcdef123456` → `Authorization=[REDACTED]`。
 
-## 10. 已知限制与偏差
+## 11. 已知限制与偏差
 
 1. **后台任务不持久**：webhook 返回 `202` 后，采集和模型调用在进程内后台任务里执行。Pod 重启会丢失正在处理的告警，没有队列和重试。实验环境接受这个取舍。
 2. **无 NetworkPolicy**：`aiops` 可以访问集群内所有 Service。生产应按最小权限限制出口。
@@ -327,17 +480,25 @@ annotation_filtered keys=["description"]
 6. **文档环境差异**：早期文档写 Ubuntu 24.04，实际集群是 22.04.5；本记录按实际值记录。
 7. **模型输出有随机性**：同一份证据两次生成的措辞可能不同，但证据 ID、置信度、优先级和数值是确定性的。
 8. **Tempo 只取 2 条 trace**：适合快速摘要，不适合统计全量错误分布。
+9. **inventory 是模拟服务**：`DELAY_MS` 和 `FAIL_MODE` 通过环境变量控制，修改后需要 rollout；它没有接入 Prometheus ServiceMonitor，所以 6b 的指标证据仍来自 demo。
+10. **6b 初始版本的客户端超时与下游超时相同**：loadgen 的 `wget -T 2` 和 demo 的 2 秒超时同时到期，导致 `BrokenPipeError`。已把客户端超时改为 5 秒；首次 6b 的指标和日志仍然有效。
+11. **T2 不是下游总处理时长**：`inventory.call` 在调用方超时时就结束，所以 `T2≈2013ms`，而 inventory 日志显示 `elapsed_ms≈5000`。卡片按 T2 写“约 2013ms”，没有夸大成 5 秒。
+12. **启动依赖在线安装**：`ai-summary` 启动时从清华源 `pip install`，网络慢会拉长启动时间。已把 startupProbe 放宽到 300 秒，但生产应改为预构建镜像。
+13. **钉钉 markdown 兼容性**：行内代码（反引号）在钉钉里会出现重复显示，卡片证据区已改为纯文本。
 
-## 11. 复现命令
+## 12. 复现命令
 
 ```bash
 # 服务状态
 kubectl -n aiops get deploy,pod,svc,servicemonitor
 kubectl -n aiops logs deploy/ai-summary --tail=50
+kubectl -n demo get deploy,pod,svc
 
 # 健康检查
 kubectl exec -i -n aiops deploy/ai-summary -- \
   python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/healthz").read())'
+kubectl -n demo exec -i deploy/demo-loadgen -- \
+  wget -qO- http://inventory.demo.svc.cluster.local:8080/item
 
 # 正常 SLI
 kubectl exec -i -n aiops deploy/ai-summary -- python - <<'PY'
@@ -357,18 +518,26 @@ date -Is
 kubectl -n aiops logs deploy/ai-summary --tail=80 | \
   grep -E '"event": "(alert_received|confidence|llm_ok|dingtalk_sent)"' | tail -5
 
-# 恢复
+# 6a 恢复
 kubectl -n demo set env deploy/demo-loadgen TARGET_PATH=/
+kubectl -n demo rollout status deploy/demo-loadgen --timeout=180s
+
+# 6b 注入
+kubectl -n demo set env deploy/demo-loadgen TARGET_PATH=/checkout
+kubectl -n demo rollout status deploy/demo-loadgen --timeout=180s
+kubectl -n demo set env deploy/inventory DELAY_MS=5000
+kubectl -n demo rollout status deploy/inventory --timeout=180s
+
+# 6b 恢复
+kubectl -n demo set env deploy/inventory DELAY_MS=0
+kubectl -n demo set env deploy/demo-loadgen TARGET_PATH=/
+kubectl -n demo rollout status deploy/inventory --timeout=180s
 kubectl -n demo rollout status deploy/demo-loadgen --timeout=180s
 ```
 
-## 12. 快照
+## 13. 快照
 
-名称：
-
-```text
-phase-6a-ai-summary-ready
-```
+### 13.1 phase-6a-ai-summary-ready
 
 创建时间：`2026-10-26 21:00:36 +08:00`（记录时的集群时间）。三台 VM（`k8s-server`、`k8s-worker-1`、`k8s-worker-2`）均已创建，用户确认。
 
@@ -383,12 +552,39 @@ phase-6a-ai-summary-ready
 | `web` | `2/2` |
 | `DemoAvailabilitySlowBurn` | 仍 active（30m/6h 长窗口残留，预期） |
 
-## 13. 结论
+### 13.2 phase-6-ai-summary-ready
 
-6a 的核心链路已经打通：
+创建时间：`2026-10-28`（用户确认；未单独记录秒级时间）。三台 VM（`k8s-server`、`k8s-worker-1`、`k8s-worker-2`）均已创建。
+
+快照前状态：
+
+| 项 | 值 |
+|---|---|
+| 节点 | 三台 `Ready`，k3s `v1.36.5+k3s1` |
+| `ai-summary` | `Running`，0 次重启，内存 39Mi |
+| `inventory` | `Running`，内存 14Mi |
+| `demo-loadgen` | `1/1`，`TARGET_PATH=/` |
+| `log-demo` | `1/1` |
+| `web` | `2/2` |
+| 非 Running Pod | 无 |
+| 注入参数 | `inventory DELAY_MS=0`，`FAIL_MODE=0` |
+
+该快照包含：
+
+- 6a 的证据采集、置信度、降级和卡片；
+- 6b 的 `inventory` 服务、`/checkout` 和 `inventory.call` span；
+- 卡片反引号修复（M5 带状态码、T1 不重复）；
+- loadgen 客户端超时 5 秒；
+- startupProbe 300 秒。
+
+重启验证：三节点 `Ready`，所有 Pod `Running`，`/item`、`/checkout`、`/healthz` 均正常（用户确认）。容器 RESTARTS 增加是节点重启后的正常现象。
+
+## 14. 结论
+
+6a 和 6b 的核心链路均已打通：
 
 ```text
-真实 500
+真实故障
   -> FastBurn firing
   -> Alertmanager continue 路由
   -> ai-summary 202 + 后台处理
@@ -400,10 +596,13 @@ phase-6a-ai-summary-ready
 
 可以确认：
 
-- 卡片里的关键数值与手工查询逐项一致；
+- 6a 的 `/error` 500 卡片与手工 PromQL 逐项一致；
+- 6b 的 `/checkout` 504 卡片指出 inventory 下游超时，证据含 M6、L1、T1、T2；
+- 同一套采集和提示词，在 6a/6b 得到不同根因、不同建议；
 - 置信度、优先级不依赖模型自报；
 - 无证据时不会编造组件和技术栈；
 - 模型关闭或失败时仍能发出降级卡片；
-- 重复投递被去重，webhook 不阻塞 Alertmanager。
+- 重复投递被去重，webhook 不阻塞 Alertmanager；
+- 最终快照保留 6a 和 6b 两个可回滚节点。
 
-下一步：Task 9–11 增加 `inventory` 下游服务和 `/checkout`，构造 6b 超时场景，验证“同一套采集能否得出不同根因”。
+下一步：阶段 7 受控运维，重点是只读权限、分级审批和审计，而不是让模型直接执行动作。

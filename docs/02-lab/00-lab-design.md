@@ -164,7 +164,7 @@ k3s 不是「玩具」，它的 API、调度器、kubelet、CNI、RBAC 与标准
 
 ### 阶段 6：AI 告警摘要
 
-> 状态：6a（`/error` 500）已验收，6b（下游超时）进行中。见 [阶段 6 AI 告警摘要验收记录](08-phase-6-acceptance.md) 和 [阶段 6 AI 告警摘要解释](09-ai-summary-explained.md)。
+> 状态：6a（`/error` 500）和 6b（下游超时）均验收通过，见 [阶段 6 AI 告警摘要验收记录](08-phase-6-acceptance.md) 和 [阶段 6 AI 告警摘要解释](09-ai-summary-explained.md)；三台 VM 已有 `phase-6a-ai-summary-ready` 和 `phase-6-ai-summary-ready` 快照。
 
 - FastAPI 接收 Alertmanager webhook，`202` 后后台处理。
 - 查询 Prometheus、Loki 和 Tempo，按 evidence ID 组装上下文。

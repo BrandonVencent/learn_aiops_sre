@@ -3,6 +3,9 @@
 > 对应文件：
 > - [`infra/aiops/ai-summary.yaml`](../../infra/aiops/ai-summary.yaml)
 > - [`infra/aiops/ai-summary-servicemonitor.yaml`](../../infra/aiops/ai-summary-servicemonitor.yaml)
+> - [`infra/aiops/inventory-service.yaml`](../../infra/aiops/inventory-service.yaml)
+> - [`infra/tracing/demo-service-otel.yaml`](../../infra/tracing/demo-service-otel.yaml)
+> - [`infra/alerting/demo-loadgen.yaml`](../../infra/alerting/demo-loadgen.yaml)
 > - [`infra/alerting/alertmanager-config.yaml`](../../infra/alerting/alertmanager-config.yaml)
 > - [`infra/aiops/ai-summary-secret.example.yaml`](../../infra/aiops/ai-summary-secret.example.yaml)
 >
@@ -255,6 +258,13 @@ GET /api/traces/<trace_id>
 3. Tempo 搜索接口本身已经按时间过滤，前 2 条足以支撑“存在性证据”。
 
 代价：不能据此得出“80% 的请求都慢在下游”这类比例结论。卡片里也不会这么写。
+
+T1/T2 的分工：
+
+- `T1`：错误 trace 的摘要，包含错误 span 数；
+- `T2`：采样 trace 里 `inventory.call` 的最大时长，只有在存在子 span 时才产生。
+
+6b 里 `T2` 是 2013ms，因为调用方在 2 秒时超时，span 也在此刻结束；inventory 自己的 5 秒处理时间不在这个 span 里。
 
 ## 6. 为什么置信度不让模型自报
 
@@ -527,7 +537,150 @@ kubectl -n aiops rollout status deploy/ai-summary --timeout=240s
 
 `rollout status` 单独执行不会加载新代码。
 
-## 14. 设计取舍总结
+### 钉钉卡片出现重复内容
+
+如果卡片里看到：
+
+```text
+M5 错误路径：/checkout/checkout
+T1 trace <id><id>
+```
+
+不是数据重复，而是钉钉 markdown 对行内代码（反引号）的渲染问题。修复方式是卡片里不要使用反引号，改成纯文本或中文括号。当前 M5 输出格式：
+
+```text
+M5 错误路径：/checkout（504） 0.249 req/s
+```
+
+### startup probe failed / connection refused
+
+```text
+Startup probe failed: Get "http://...:8080/healthz": connect: connection refused
+```
+
+如果日志停在 `pip install`，说明是依赖安装太慢，不是代码错误。当前 startupProbe 给 300 秒：
+
+```yaml
+startupProbe:
+  periodSeconds: 5
+  failureThreshold: 60
+```
+
+生产环境应预构建镜像，避免每次启动都联网安装。
+
+### Webhook 返回 504 但 demo 指标正常
+
+如果 loadgen 报 504 而 demo 的 `path="/checkout"` 计数在增长，先看客户端超时：
+
+```text
+loadgen wget -T 2
+demo downstream timeout 2s
+```
+
+两者同时到期会触发 `BrokenPipeError`。把客户端超时调到大于服务端超时（当前 `-T 5`）即可。
+
+## 14. 6b 场景：`/checkout` 与 `inventory`
+
+### 14.1 为什么加一个下游服务
+
+6a 的 `/error` 是“立即失败”，只能验证错误率和错误路径。真实故障里更常见的是“下游变慢，上游超时”。为了验证同一套 AI 采集能不能区分这两种情况，6b 增加：
+
+```text
+loadgen -> /checkout -> inventory
+```
+
+`inventory` 是一个只有两个端点的标准库 HTTP 服务：
+
+| 端点 | 行为 |
+|---|---|
+| `/healthz` | 返回 `ok`，只给探针用 |
+| `/item` | 睡 `DELAY_MS` 毫秒后返回 `{"item":"ok"}`；`FAIL_MODE=1` 时返回 500 |
+
+为什么不用 Redis / MySQL：
+
+- 6b 只需要“可控延迟”，不需要真实存储；
+- 引入 Redis/MySQL 会增加资源、安装和故障面，偏离“验证证据区分能力”的目标；
+- `DELAY_MS` 是确定性的，能让超时稳定复现。
+
+### 14.2 `/checkout` 的实现
+
+demo 的处理流程：
+
+```text
+GET /checkout
+  -> 创建 server span "GET /checkout"
+  -> 创建子 span "inventory.call"
+  -> urllib.request.urlopen("http://inventory.demo:8080/item", timeout=2)
+       |
+       +-- 成功：200 ok，记录 downstream.status / downstream.duration_ms
+       |
+       +-- 超时或异常：504，日志 "downstream timeout"，子 span 标记 ERROR
+```
+
+关键点：
+
+- 客户端超时 `2s` 是故意设的，6b 注入 `DELAY_MS=5000` 后必然触发；
+- 失败时同时标记子 span 和外层 span，Tempo 的 `status=error` 才能搜到整条 trace；
+- 失败日志写 `downstream="inventory"`，Loki 才能按关键字命中；
+- `/checkout` 加入 `metric_path` 白名单，避免路径基数爆炸。
+
+### 14.3 为什么 T2 是 2013ms，不是 5000ms
+
+`inventory.call` 的时长是按“调用方从发起到放弃”计算的：
+
+```text
+0ms      demo 发起请求
+2000ms   urllib 超时，抛 TimeoutError
+2000ms   span 结束，T2 ≈ 2013ms
+5000ms   inventory 自己睡完，写日志 elapsed_ms≈5000
+```
+
+所以：
+
+- `T2` 证明“调用方等了约 2 秒”；
+- inventory 日志证明“下游实际处理了约 5 秒”；
+- 两个证据不矛盾，只是观察点不同。
+
+卡片写“trace 中 inventory 调用约 2013ms”，没有写成 5000ms，这是对的。如果要让 T2 反映 5 秒，就必须把 demo 的超时改到 5 秒以上，但那样 `/checkout` 不会返回 504，6b 就不成立。
+
+### 14.4 6a/6b 如何靠证据区分
+
+| 证据 | 6a | 6b |
+|---|---|---|
+| M5 路径 | `/error` | `/checkout` |
+| M5 状态码 | `500` | `504` |
+| M6 P95 | 约 `4.75ms` | 约 `2425ms` |
+| T2 | 无 | 约 `2013ms` |
+| 日志关键字 | `demo error for Loki` | `downstream timeout` |
+| 根因 | 自身 500，触发原因未知 | 下游 inventory 超时 |
+
+服务端的 `is_timeout_scenario` 先看 trace/日志，再决定置信度的命中规则：
+
+```python
+if timeout:
+    metrics_hit = p95 > 1.0 or burn5m > 14.4
+    logs_hit = has_timeout_log
+    traces_hit = has_slow_inventory
+```
+
+这样 6b 不会因为“有错误日志”就套用 6a 的 500 模板，6a 也不会因为“没有下游”而误判超时。
+
+### 14.5 客户端超时必须大于服务端超时
+
+首次 6b 出现 `BrokenPipeError`，原因是：
+
+```text
+loadgen wget -T 2
+demo downstream timeout 2s
+```
+
+两者同时到期，客户端先断开，demo 再写 504 就失败。指标和日志在断开前已写入，但 traceback 淹没了日志。
+
+修复：loadgen 改成 `wget -T 5`，让客户端比 demo 多等 3 秒，正常收到 504。
+
+这条经验适用于所有网关/上游：**客户端的超时必须大于服务端的下游超时**，否则永远看不到服务端精心构造的错误响应。
+
+## 15. 设计取舍总结
 
 | 选择 | 好处 | 代价 |
 |---|---|---|
@@ -539,5 +692,8 @@ kubectl -n aiops rollout status deploy/ai-summary --timeout=240s
 | 证据 ID 校验 | 防止编造引用 | 多一次重试，偶尔降级 |
 | 钉钉加签 | 比关键词安全 | 配置错误时排错成本高 |
 | 进程内去重 | 简单 | 多副本失效，重启清零 |
+| inventory 用标准库 | 无 pip 依赖、启动快 | 功能有限，只适合模拟 |
+| 客户端超时 5s / 下游超时 2s | 能收到 504，日志干净 | 单次故障请求多等 3 秒 |
+| 卡片不用反引号 | 兼容钉钉渲染 | 少一点等宽代码效果 |
 
 这些取舍都指向同一个目标：**先保证结论有证据、可复核，再追求表达自然。**

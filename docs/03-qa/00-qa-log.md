@@ -13,7 +13,7 @@
 | 2026-10-22 | 阶段 3：Loki + Fluent Bit + Grafana 日志链路、level 查询、Python traceback 多行合并、验收记录与 `phase-3-logging-ready` 快照 | [2026-10-22.md](2026-10-22.md) |
 | 2026-10-23 | 阶段 4–5：Tempo/OTel 链路；SLI/SLO、燃烧率告警、Alertmanager 路由/分组/抑制/静默、本地 webhook；SlowBurn 长窗口偏差 | [2026-10-23.md](2026-10-23.md) |
 | 2026-10-26 | 阶段 6 设计：企业微信外部群限制与智能机器人误区、钉钉群机器人加签、AI 摘要字段、证据覆盖率置信度、6a/6b 场景拆分；Task 1–7 实现与 6a 真实验收 | [2026-10-26.md](2026-10-26.md) |
-| 2026-10-28 | 阶段 6 Task 9：`inventory` 下游服务、`/checkout`、2 秒超时、`inventory.call` 子 span 和正常链路验证 | [2026-10-28.md](2026-10-28.md) |
+| 2026-10-28 | 阶段 6 Task 9–10：`inventory` 下游服务、`/checkout`、2 秒超时、`inventory.call` 子 span；6b 超时验收、证据对比，以及 BrokenPipe / 钉钉重复渲染 / startupProbe 修复 | [2026-10-28.md](2026-10-28.md) |
 
 ## 记录模板
 
