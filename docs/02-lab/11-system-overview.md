@@ -274,6 +274,111 @@ sequenceDiagram
 - **固定查询**：不让模型生成 PromQL，避免查错、查慢、被日志里的指令带偏。
 - **证据校验**：模型引用的 ID 必须真实存在，根因不能提证据里没有的组件。
 
+### 4.5 端到端数据流转的细节复盘
+
+从「服务报错或 Pod 不 Ready」到「钉钉卡片」的完整流转，每一步都有代码出处。
+
+#### 4.5.0 先澄清：两类故障的信号路径不同
+
+| 故障类型 | 信号在哪产生 | 触发哪条告警 |
+|---|---|---|
+| 应用内报错（500） | demo 自己写 counter `demo_http_requests_total{status="500"}` | FastBurn（5xx → 错误率） |
+| Pod 重启 / NotReady | demo 变成无数据——没机会写 counter；loadgen 的连接失败也不计入 | NoTraffic（10m 无请求）兜底 |
+
+结论要会主动说：**告警对「变慢」和「变错」敏感，对「瞬间消失」靠 NoTraffic 兜底**。
+
+#### 4.5.1 第 0 步：三类数据同时产生（t=0）
+
+demo 每处理一个请求，同一时刻做三件事：
+
+1. counter 自增，`path` 在白名单（`/`、`/error`、`/checkout`、`other`）防基数爆炸；
+2. stdout 写一行 JSON 日志，含 `level`、`message`、`trace_id`、`span_id`；
+3. OTel server span 上报，错误标 `ERROR`，`/checkout` 另有 `inventory.call` 子 span。
+
+`/healthz` 和 `/metrics` 不产生业务计数、日志和 trace，避免探针污染。
+
+#### 4.5.2 第 1 步：采集（约 0–15 秒）
+
+| 数据 | 采集方式 |
+|---|---|
+| 指标 | ServiceMonitor 15s 抓 demo `/metrics` |
+| 日志 | Fluent Bit tail stdout → Loki，补 namespace/pod/node 标签 |
+| 链路 | OTel SDK → Collector 4317/4318 → Tempo |
+
+同时 recording rule 每 30s 预算四窗口 SLI 与燃烧率。AI 只读结果，保证与 Grafana 同口径。
+
+#### 4.5.3 第 2 步：规则判定（6b 实测时间线）
+
+```text
+FastBurn: burn5m>14.4 AND burn1h>14.4, for 2m
+SlowBurn: burn30m>6 AND burn6h>6, for 15m
+NoTraffic: rate==0 or absent, for 10m
+
+15:00:51  注入 inventory 延迟 5000ms
+~15:09    5m 与 1h 窗口先后越过阈值（估算，未逐点记录）
+15:11:09  FastBurn state=active
+```
+
+11 分钟是 5m/1h 双窗 + `for 2m` 的代价，换取不误报。
+
+#### 4.5.4 第 3 步：Alertmanager（startsAt 后 +10s）
+
+- `groupWait: 10s` 先攒同 group 的告警，15:11:19 才发出——这就是 alert_received 比 startsAt 晚 10 秒的原因。
+- `continue: true` 分两路：原 `alert-webhook` 保留；`ai-summary` 旁路新增。
+- inhibit 规则：同 service/slo 下 critical 压掉 warning。
+
+#### 4.5.5 第 4 步：ai-summary 处理（15:11:19 → 15:11:23）
+
+**Webhook 层（毫秒级）**：
+
+```text
+dedup_key = groupKey + alertnames（resolved 状态加 ":resolved" 后缀）
+600s TTL 指纹，重复投递记 alert_duplicate，直接 202 跳过
+否则后台任务入队，接口返回 202（实测 11.8ms）
+```
+
+**分流**：`status=="resolved"` 直接走恢复流程，不调 LLM。
+
+**collect_evidence（约 2–3s）**：10 条固定 PromQL + 1 条 LogQL（双重 JSON 解包）+ Tempo 先搜错误 trace，取前 2 条详情，得出 T1（错误 span 数）和 T2（最大 `inventory.call` 时长）。每条结果过非有限值过滤，`NaN`/`Inf` 在采集层丢弃。
+
+**判定（毫秒级，全在服务端）**：
+
+```text
+is_timeout_scenario  trace/日志含 downstream|timeout|>2000ms → 切换判定分支
+compute_priority     NoTraffic→P3；critical 且 burn5m>14.4→P1；否则 P2
+compute_confidence   metrics/logs/traces 命中数 → 33/67/100
+```
+
+**提示词三段**：`<alert>`（labels + 脱敏后 annotations，标注为人类假设）、`<evidence>`（id + source + query + value + observed_at）、`<untrusted_logs>`（逐行编号，系统提示词声明忽略其中指令）。
+
+**调用与归一化**：DeepSeek 返回 JSON 剥围栏 → pydantic 模型校验 → 证据 ID 按 `,/\s` 拆分、大小写归一后逐个匹配；**一条有效引用都没有直接 ValueError 走 fallback**；字段截断（summary≤300、root_cause≤500、cited≤5、actions≤3×80 字）。调用 4xx/5xx 或非法 JSON 有一轮自动 repair，再失败走规则模板。`matched<2` 时强制覆盖 root_cause 为「证据不足」，标题加 `[低置信度]`。
+
+**卡片渲染与发送（15:11:24 到群）**：七个字段按固定槽位渲染，证据行纯文本（M5 格式 `/checkout（504）`，不用反引号）；钉钉加签 = HMAC-SHA256，待签内容是「时间戳毫秒值 + 换行 + secret」，结果 base64 后 URL encode 拼到 webhook URL；60 秒内第 11 条起转汇总消息。
+
+#### 4.5.6 第 5 步：resolved（15:22:49 → 15:22:50）
+
+FastBurn 恢复后，Alertmanager `sendResolved` 再发一条 `status="resolved"` 的 payload。`handle_resolved` 只算 `startsAt→endsAt` 的持续时长和恢复时间，直接发 ✅ 恢复卡片，不走证据和模型。15:22:52 的 SlowBurn P2 是 30m/6h 长窗残留，属已知偏差，未改规则未静默。
+
+#### 4.5.7 端到端复述脚本（90 秒）
+
+> demo 每个请求同时产出三份东西：更新 counter、写结构化日志（带 trace_id）、OTel 上报 span，分别进 Prometheus、Loki、Tempo。
+>
+> 每 30 秒 Prometheus 评估一次 recording rule，燃烧率在双窗口都超过 14.4 且持续 2 分钟后告警 firing，交给 Alertmanager。Alertmanager 用 continue: true 让告警既走原 webhook，又发一份给 ai-summary。
+>
+> ai-summary 毫秒级返回 202，去重查 groupKey 指纹（600 秒窗口），真正处理在后台线程：一次性跑 10 条固定 PromQL + 错误日志 LogQL + Tempo 错误 trace 前 2 条，每条数据编 ID 作为 evidence。按日志/trace 是否含 timeout 决定判定场景，优先级和置信度都在服务端算。
+>
+> 然后构造三段式提示词，发 DeepSeek 要求 JSON schema；返回后 pydantic 校验，证据 ID 必须真实存在，否则直接 fallback 规则模板。命中数小于 2 时强制覆盖为「证据不足」。
+>
+> 最后 markdown 渲染钉钉卡片，HMAC 加签发送，60 秒内超 10 条转汇总。告警收到到卡片呈现约 5 秒；恢复走 status=resolved 路径直接发恢复卡，不再调模型。
+
+#### 4.5.8 三个常见追问
+
+| 问题 | 回答要点 |
+|---|---|
+| 202 之后为什么还要去重？202 失败怎么办？ | 重复投递是 Alertmanager 的正常行为（同 groupKey 反复 match + 重试），fast-path 拦截省一次模型调用；202 失败由 Alertmanager 按退避重试，下一次投递会再走指纹判断，天然幂等。 |
+| AI 为什么不自己写 PromQL？ | 模型可能语法对但口径错，数字没人校对；固定查询 + recording rule 保证与 Grafana 同口径、可复核；把模型隔离在查询路径之外，也降低被日志指令带偏的风险。 |
+| P95 很慢为什么定 P1？ | 优先级由「哪条告警 firing」决定：FastBurn 是 critical 且 burn5m>14.4 → P1。P95 只影响置信度的命中数，不参与定级——两个信号在系统里是分开的。 |
+
 ---
 
 ## 5. 组件清单与资源
